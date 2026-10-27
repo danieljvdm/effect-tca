@@ -95,10 +95,10 @@ behavior. The root catalog owns compiler versions.
 ## Boundaries
 
 - Framework code lives in `packages/*`; runnable consumers live in `examples/*`.
-- Core owns state transitions, action routing, command lifetime, and scoped stores.
+- Core owns state transitions, action routing, effect lifetime, and scoped stores.
 - Core must not import React, platform implementations, or application code.
 - Atom bindings live under the explicit `@yielded/tca/atom` entry point.
-- Commands send actions; only reducers change feature state. Reducers are synchronous.
+- Effects send actions; only reducers change feature state. Reducers are synchronous.
 - Child identity owns cancellation. Removed or replaced instances cannot emit into new ones.
 - Stores are in-memory. Persistence, network delivery, and durable execution are host concerns.
 

@@ -1,4 +1,4 @@
-import { Command, Feature } from "@yielded/tca";
+import { Feature, FeatureEffect } from "@yielded/tca";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -97,7 +97,7 @@ export const Search = Feature.make({
         SearchApi.use((api) => api.search(query)).pipe(
           Effect.delay("250 millis"),
           Effect.map((results) => SearchAction.cases.ResultsLoaded.make({ results })),
-          Command.latest("search"),
+          FeatureEffect.replace({ cancellationKey: "search" }),
         ),
       ],
     }),
@@ -119,16 +119,19 @@ export const Detail = Feature.make({
   actions: DetailAction,
   initial: (note: Note): DetailState => ({ note, seconds: 0, running: false }),
   cases: {
-    Started: (state) => ({
-      state: { ...state, running: true },
-      effects: [
-        Stream.tick("1 second").pipe(
-          Stream.drop(1),
-          Stream.map(() => DetailAction.cases.Tick.make({})),
-          Command.latest("timer"),
-        ),
-      ],
-    }),
+    Started: (state) => {
+      if (state.running) return { state };
+
+      return {
+        state: { ...state, running: true },
+        effects: [
+          Stream.tick("1 second").pipe(
+            Stream.drop(1),
+            Stream.map(() => DetailAction.cases.Tick.make({})),
+          ),
+        ],
+      };
+    },
     Tick: (state) => ({ state: { ...state, seconds: state.seconds + 1 } }),
   },
 });
@@ -166,9 +169,11 @@ export const App = Feature.make({
   cases: {
     Search: (state) => ({ state }),
     Detail: (state) => ({ state }),
-    Opened: (state, { note }) => ({
-      state: { ...state, detail: Option.some(Detail.initial(note)) },
-    }),
+    Opened: (state, { note }) => {
+      if (Option.isSome(state.detail) && state.detail.value.note.id === note.id) return { state };
+
+      return { state: { ...state, detail: Option.some(Detail.initial(note)) } };
+    },
     Closed: (state) => ({ state: { ...state, detail: Option.none() } }),
   },
 }).pipe(searchChild, detailChild);

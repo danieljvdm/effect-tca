@@ -2,7 +2,7 @@ import * as Cause from "effect/Cause";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
-import type * as Fiber from "effect/Fiber";
+import * as Fiber from "effect/Fiber";
 import * as Option from "effect/Option";
 import * as PubSub from "effect/PubSub";
 import * as Queue from "effect/Queue";
@@ -10,33 +10,29 @@ import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 
-import type * as Command from "../Command.ts";
 import type * as Feature from "../Feature.ts";
+import type * as FeatureEffect from "../FeatureEffect.ts";
 import type * as Store from "../Store.ts";
 import { StoreError } from "../StoreError.ts";
+import { normalize, type Operation } from "./featureEffect.ts";
 
-interface Owner {
-  readonly executions: Set<Execution>;
-  readonly keys: Map<Command.Key, Execution>;
+interface Mounted {
+  readonly scope: Scope.Closeable;
+  readonly keys: Map<FeatureEffect.CancellationKey, Scope.Closeable>;
   closed?: Deferred.Deferred<void>;
 }
 
 interface Origin {
-  readonly owner: Owner;
-  readonly path: string;
+  readonly scope: Scope.Scope;
+  readonly closed: Deferred.Deferred<void>;
 }
 
 /** @internal */
 export const ScopeTypeId: unique symbol = Symbol.for("@yielded/tca/Store/scope");
 
-interface Execution {
-  valid: boolean;
-  fiber?: Fiber.Fiber<void>;
-}
-
 export interface Message<A> {
   readonly action: A;
-  readonly execution?: Execution;
+  readonly execution?: Scope.Scope;
   readonly origin?: Origin;
   readonly receipt: Deferred.Deferred<void, StoreError>;
 }
@@ -51,15 +47,18 @@ export interface Runtime<S, A> {
 }
 
 const disposed = () => StoreError.make({ reason: "Closed", message: "The store is closed" });
-const valid = <A>(message: Message<A>) => message.execution?.valid ?? true;
 const isStoreError = Schema.is(StoreError);
 
-// Invalidating is synchronous with the turn. Waiting for interruption here would
-// deadlock a command that is currently waiting for its own action's receipt.
-const invalidate = (execution: Execution): void => {
-  execution.valid = false;
-  execution.fiber?.interruptUnsafe();
+// Parent closure revokes descendants before their finalizers have had time to run.
+const isOpen = (scope: Scope.Scope | undefined): boolean => {
+  for (let current = scope; current !== undefined; current = current.parent) {
+    if (current.state._tag === "Closed") return false;
+  }
+
+  return true;
 };
+
+const valid = <A>(message: Message<A>) => isOpen(message.execution);
 
 export const makeRuntime = Effect.fnUntraced(function* <S, A, R, I>(
   feature: Feature.Definition<S, A, R, I>,
@@ -85,29 +84,60 @@ export const makeRuntime = Effect.fnUntraced(function* <S, A, R, I>(
 
   const context = yield* Effect.context<R>();
   const scope = yield* Scope.make("parallel");
+  const runCleanup = Effect.runForkWith(context);
   const inbox = yield* Queue.make<Message<A>>({ capacity });
   const emissions = yield* Queue.make<Message<A>>({ capacity });
   const snapshots = yield* PubSub.sliding<S>({ capacity: 1, replay: 1 });
   const closed = yield* Deferred.make<void, StoreError>();
-  const owners = new Map<string, Owner>();
-  const executions = new Set<Execution>();
+  const mounted = new Map<string, Mounted>();
+  const cleanupFibers = new Set<Fiber.Fiber<void>>();
+  let running = 0;
   let stopped = false;
   let failure: StoreError | undefined;
   let cached: Message<A> | undefined;
 
-  const stop = (error: StoreError): Effect.Effect<void> =>
-    Effect.sync(() => {
-      if (failure === undefined) failure = error;
-      stopped = true;
-      Deferred.doneUnsafe(closed, Effect.fail(failure));
-      for (const execution of executions) invalidate(execution);
-    });
+  // Revocation is synchronous with the reducer turn. Cleanup cannot wait here:
+  // the interrupted fiber may be waiting for this same turn's action receipt.
+  const revoke = (target: Scope.Closeable, exit: Exit.Exit<unknown, unknown> = Exit.void): void => {
+    const cleanup = Scope.closeUnsafe(target, exit);
+
+    if (cleanup !== undefined) {
+      // Detachment and supervision must be atomic: an interruptible hand-off
+      // could lose the first (and only) cleanup returned by closeUnsafe.
+      const fiber = runCleanup(Effect.andThen(Effect.yieldNow, cleanup), { uninterruptible: true });
+
+      cleanupFibers.add(fiber);
+      fiber.addObserver((result) => {
+        if (Exit.isFailure(result) && !Cause.hasInterruptsOnly(result.cause)) {
+          stopUnsafe(
+            StoreError.make({
+              reason: "Effect",
+              message: "Effect cleanup failed unexpectedly",
+              cause: result.cause,
+            }),
+          );
+        }
+        cleanupFibers.delete(fiber);
+      });
+    }
+  };
+
+  const stopUnsafe = (error: StoreError): void => {
+    if (failure === undefined) failure = error;
+    stopped = true;
+    Deferred.doneUnsafe(closed, Effect.fail(failure));
+    revoke(scope);
+  };
+
+  const stop = (error: StoreError): Effect.Effect<void> => Effect.sync(() => stopUnsafe(error));
 
   yield* Effect.addFinalizer((exit) =>
     Effect.gen(function* () {
       stopped = true;
-      for (const execution of executions) invalidate(execution);
-      yield* Scope.close(scope, exit);
+      revoke(scope, exit);
+      // A scope becomes Closed before its finalizers finish. Await the owned
+      // cleanup fibers, including any cleanup added while another finishes.
+      while (cleanupFibers.size > 0) yield* Fiber.awaitAll([...cleanupFibers]);
       if (failure === undefined) yield* Deferred.succeed(closed, undefined);
       else yield* Deferred.fail(closed, failure);
       yield* Queue.shutdown(inbox);
@@ -118,16 +148,34 @@ export const makeRuntime = Effect.fnUntraced(function* <S, A, R, I>(
   );
 
   const reconcile = (next: S): void => {
-    const paths = new Set(feature.lifetimes(next).map((path) => JSON.stringify(path)));
+    const paths = new Set<string>();
+    const additions: Array<readonly [string, ReadonlyArray<string>]> = [];
 
-    for (const [path, owner] of owners) {
-      if (paths.has(path)) continue;
-      for (const execution of owner.executions) invalidate(execution);
-      if (owner.closed !== undefined) Deferred.doneUnsafe(owner.closed, Effect.void);
-      owners.delete(path);
+    for (const path of feature.lifetimes(next)) {
+      const key = JSON.stringify(path);
+
+      paths.add(key);
+      if (!mounted.has(key)) additions.push([key, path]);
     }
-    for (const path of paths) {
-      if (!owners.has(path)) owners.set(path, { executions: new Set(), keys: new Map() });
+
+    for (const [path, owner] of mounted) {
+      if (paths.has(path)) continue;
+      revoke(owner.scope);
+      if (owner.closed !== undefined) Deferred.doneUnsafe(owner.closed, Effect.void);
+      mounted.delete(path);
+    }
+    for (const [key, path] of additions.sort((a, b) => a[1].length - b[1].length)) {
+      let parent = scope;
+
+      for (let length = path.length - 1; length >= 0; length--) {
+        const ancestor = mounted.get(JSON.stringify(path.slice(0, length)));
+
+        if (ancestor !== undefined) {
+          parent = ancestor.scope;
+          break;
+        }
+      }
+      mounted.set(key, { scope: Scope.forkUnsafe(parent, "parallel"), keys: new Map() });
     }
   };
 
@@ -153,13 +201,13 @@ export const makeRuntime = Effect.fnUntraced(function* <S, A, R, I>(
           ),
     );
 
-  const live = (origin: Origin): boolean => owners.get(origin.path) === origin.owner;
+  const live = (origin: Origin): boolean => isOpen(origin.scope);
 
   const missing = () =>
     StoreError.make({ reason: "MissingChild", message: "The scoped child is no longer present" });
 
-  const send = Effect.fnUntraced(function* (action: A, execution?: Execution, origin?: Origin) {
-    if (execution !== undefined && !execution.valid) return;
+  const send = Effect.fnUntraced(function* (action: A, execution?: Scope.Scope, origin?: Origin) {
+    if (!isOpen(execution)) return;
     if (origin !== undefined && !live(origin)) return yield* missing();
 
     const receipt = yield* Deferred.make<void, StoreError>();
@@ -170,51 +218,50 @@ export const makeRuntime = Effect.fnUntraced(function* <S, A, R, I>(
     );
   });
 
-  const launch = Effect.fnUntraced(function* (command: Command.Command<A, R>) {
-    const owner = owners.get(JSON.stringify(command.path));
+  const launch = Effect.fnUntraced(function* (command: Operation<A, R>) {
+    const owner = mounted.get(JSON.stringify(command.path));
 
     // A child may have emitted work during the same action that removed it.
-    if (owner === undefined || stopped) return;
+    if (owner === undefined || stopped || !isOpen(owner.scope)) return;
     if (command.key !== undefined) {
       const previous = owner.keys.get(command.key);
 
-      if (previous !== undefined) invalidate(previous);
+      if (previous !== undefined) revoke(previous);
       owner.keys.delete(command.key);
     }
     if (command._tag === "Cancel") return;
 
-    const execution: Execution = { valid: true };
+    const execution = Scope.forkUnsafe(owner.scope, "parallel");
 
-    owner.executions.add(execution);
-    executions.add(execution);
+    running++;
     if (command.key !== undefined) owner.keys.set(command.key, execution);
 
     const program = Effect.suspend(() =>
       command.run((action) => send(action, execution).pipe(Effect.catch(() => Effect.interrupt))),
     );
 
-    execution.fiber = yield* program.pipe(
+    yield* program.pipe(
       Effect.scoped,
       Effect.provideContext(context),
-      Effect.onExit((exit) =>
-        Effect.gen(function* () {
-          execution.valid = false;
-          executions.delete(execution);
-          owner.executions.delete(execution);
-          if (command.key !== undefined && owner.keys.get(command.key) === execution)
-            owner.keys.delete(command.key);
-          if (Exit.isFailure(exit) && !Cause.hasInterruptsOnly(exit.cause)) {
-            yield* stop(
-              StoreError.make({
-                reason: "Command",
-                message: "A command failed unexpectedly",
-                cause: exit.cause,
-              }),
-            );
-          }
-        }),
-      ),
-      Effect.forkIn(scope),
+      Effect.onExit((exit) => {
+        // User resources have finished above. This scope owns only this fiber;
+        // its self-finalizer does not wait. onExit runs cleanup uninterruptibly.
+        running--;
+        if (command.key !== undefined && owner.keys.get(command.key) === execution)
+          owner.keys.delete(command.key);
+        if (Exit.isFailure(exit) && !Cause.hasInterruptsOnly(exit.cause)) {
+          stopUnsafe(
+            StoreError.make({
+              reason: "Effect",
+              message: "An effect failed unexpectedly",
+              cause: exit.cause,
+            }),
+          );
+        }
+
+        return Scope.closeUnsafe(execution, exit) ?? Effect.void;
+      }),
+      Effect.forkIn(execution),
     );
   });
 
@@ -248,7 +295,7 @@ export const makeRuntime = Effect.fnUntraced(function* <S, A, R, I>(
       catch: (cause) => StoreError.make({ reason: "Reducer", message: "A reducer failed", cause }),
     });
 
-    for (const command of transition.effects ?? []) yield* launch(command);
+    for (const effect of transition.effects ?? []) yield* launch(normalize(effect));
     yield* Deferred.succeed(message.receipt, undefined);
   });
 
@@ -304,15 +351,12 @@ export const makeRuntime = Effect.fnUntraced(function* <S, A, R, I>(
     path: ReadonlyArray<string>,
     origin?: Origin,
   ): Store.Store<VS, VA> => {
-    const cache = new WeakMap<object, { readonly owner: Owner; readonly view: object }>();
+    const cache = new WeakMap<object, { readonly scope: Scope.Scope; readonly view: object }>();
 
     const viewClosed =
       origin === undefined
         ? Deferred.await(closed)
-        : Effect.raceFirst(
-            Deferred.await(closed),
-            Deferred.await((origin.owner.closed ??= Deferred.makeUnsafe<void>())),
-          );
+        : Effect.raceFirst(Deferred.await(closed), Deferred.await(origin.closed));
 
     const read = (): VS => {
       if (stopped) throw failure ?? disposed();
@@ -333,7 +377,7 @@ export const makeRuntime = Effect.fnUntraced(function* <S, A, R, I>(
           if (Option.isNone(tail) || Option.isNone(focus.select(parent))) return Option.none();
           const childPath = [...path, ...tail.value];
           const key = JSON.stringify(childPath);
-          const owner = owners.get(key);
+          const owner = mounted.get(key);
 
           if (owner === undefined)
             throw StoreError.make({
@@ -342,7 +386,7 @@ export const makeRuntime = Effect.fnUntraced(function* <S, A, R, I>(
             });
           const cachedView = cache.get(focus);
 
-          if (cachedView?.owner === owner) {
+          if (cachedView?.scope === owner.scope) {
             // A descriptor fixes CS/CA; this cache only erases those parameters for storage.
             return Option.some(cachedView.view as Store.Store<CS, CA>);
           }
@@ -351,10 +395,10 @@ export const makeRuntime = Effect.fnUntraced(function* <S, A, R, I>(
             (snapshot) => Option.flatMap(select(snapshot), focus.select),
             (action: CA) => embed(focus.embed(action)),
             childPath,
-            { owner, path: key },
+            { scope: owner.scope, closed: (owner.closed ??= Deferred.makeUnsafe<void>()) },
           );
 
-          cache.set(focus, { owner, view: child });
+          cache.set(focus, { scope: owner.scope, view: child });
 
           return Option.some(child);
         },
@@ -411,7 +455,7 @@ export const makeRuntime = Effect.fnUntraced(function* <S, A, R, I>(
     peek,
     take,
     commit: (message) => submit(message, inbox),
-    active: Effect.sync(() => executions.size),
+    active: Effect.sync(() => running + cleanupFibers.size),
     checkOpen: Effect.suspend(() => (stopped ? Effect.fail(failure ?? disposed()) : Effect.void)),
   };
 });

@@ -122,8 +122,9 @@ try {
   await writeFile(
     join(consumer, "src/index.ts"),
     [
-      'export { Command, Feature, Store, TestStore, StoreError } from "@yielded/tca";',
+      'export { Feature, FeatureEffect, Store, TestStore, StoreError } from "@yielded/tca";',
       'export * as DirectFeature from "@yielded/tca/Feature";',
+      'export * as DirectFeatureEffect from "@yielded/tca/FeatureEffect";',
       'export { FeatureAtom } from "@yielded/tca/atom";',
       'export * as DirectAtom from "@yielded/tca/atom/FeatureAtom";',
       "",

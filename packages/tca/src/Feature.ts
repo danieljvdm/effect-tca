@@ -2,13 +2,17 @@
  * Immutable feature definitions and typed child composition.
  * @since 0.1.0-beta.0
  */
+import type * as Effect from "effect/Effect";
 import type * as Optic from "effect/Optic";
 import * as Option from "effect/Option";
 import type { Pipeable } from "effect/Pipeable";
 import type * as Schema from "effect/Schema";
+import type * as Scope from "effect/Scope";
+import type * as Stream from "effect/Stream";
 
-import * as Command from "./Command.ts";
+import type * as FeatureEffect from "./FeatureEffect.ts";
 import { actionRoute, makeDefinition, stateLens } from "./internal/feature.ts";
+import { normalize, type Operation } from "./internal/featureEffect.ts";
 import { StoreError } from "./StoreError.ts";
 
 /**
@@ -18,7 +22,7 @@ import { StoreError } from "./StoreError.ts";
  */
 export interface Transition<S, A, R = never> {
   readonly state: S;
-  readonly effects?: ReadonlyArray<Command.Command<A, R>>;
+  readonly effects?: ReadonlyArray<FeatureEffect.FeatureEffect<A, R>>;
 }
 
 /**
@@ -59,8 +63,11 @@ type Cases<S, C extends Record<string, Schema.Constraint>> = {
 };
 
 type Requirements<T> = T extends { readonly effects?: ReadonlyArray<infer C> }
-  ? C extends Command.Run<infer _A, infer R>
-    ? R
+  ? C extends
+      | Effect.Effect<infer _A, never, infer R>
+      | Stream.Stream<infer _A, never, infer R>
+      | FeatureEffect.Run<infer _A, infer R>
+    ? Exclude<R, Scope.Scope>
     : never
   : never;
 
@@ -68,7 +75,7 @@ type Requirements<T> = T extends { readonly effects?: ReadonlyArray<infer C> }
  * Defines synchronous state transitions. The typed two-call form accepts a reducer.
  * The schema form infers actions and requires one handler per action tag. Annotate
  * the initializer's return type to widen empty collections or optional state, and
- * its parameter when state needs caller input. Both forms infer command requirements.
+ * its parameter when state needs caller input. Both forms infer effect requirements.
  * @example
  * ```ts
  * const Counter = Feature.make<{ readonly count: number }, "increment">()({
@@ -82,7 +89,7 @@ type Requirements<T> = T extends { readonly effects?: ReadonlyArray<infer C> }
 export function make<S, A>(): <R = never, I = void>(spec: {
   readonly initial: (input: I) => S;
   readonly reduce: (state: S, action: A) => Transition<S, A, R>;
-}) => Definition<S, A, R, I>;
+}) => Definition<S, A, Exclude<R, Scope.Scope>, I>;
 
 export function make<
   C extends Record<string, Schema.Constraint>,
@@ -181,7 +188,7 @@ export interface Focus<
 
 /**
  * Reusable required-child composition and store focus. Applying it preserves the
- * parent's initializer input and includes the child's command requirements.
+ * parent's initializer input and includes the child's effect requirements.
  * @category models
  * @since 0.1.0-beta.0
  */
@@ -227,13 +234,21 @@ export interface Child<S, A, CS, CA, CR> {
 }
 
 const rebase = <A, B, R>(
-  command: Command.Command<A, R>,
+  effect: FeatureEffect.FeatureEffect<A, R>,
   path: ReadonlyArray<string>,
   embed: (action: A) => B,
-): Command.Command<B, R> => ({
-  ...Command.map(command, embed),
-  path: [...path, ...command.path],
-});
+): Operation<B, R> => {
+  const operation = normalize(effect);
+  const rebasedPath = [...path, ...operation.path];
+
+  return operation._tag === "Cancel"
+    ? { ...operation, path: rebasedPath }
+    : {
+        ...operation,
+        path: rebasedPath,
+        run: (send) => operation.run((action) => send(embed(action))),
+      };
+};
 
 const register = <S, A, R, I>(self: Definition<S, A, R, I>, key: string): ReadonlyArray<string> => {
   if (self.routes.includes(key))
@@ -290,7 +305,7 @@ export function child<S, A, CS, CA, CR>(
         return {
           state: parent.state,
           effects: [
-            ...(result.effects ?? []).map((command) => rebase(command, [action.key], action.embed)),
+            ...(result.effects ?? []).map((effect) => rebase(effect, [action.key], action.embed)),
             ...(parent.effects ?? []),
           ],
         };
@@ -321,7 +336,7 @@ export interface OptionalChild<S, A, CS, CA, CR> {
 
 /**
  * Composes an optional child. Removal or identity replacement cancels its work.
- * An external child action while absent throws StoreError; obsolete command actions
+ * An external child action while absent throws StoreError; obsolete effect actions
  * are discarded by the store before reaching the reducer. Reuse the descriptor
  * to scope a store to the same lifetime. The two-call form accepts checked names.
  * @category combinators
@@ -386,8 +401,8 @@ export function optionalChild<S, A, CS, CA, CR>(
         return {
           state: parent.state,
           effects: [
-            ...(result.effects ?? []).map((command) =>
-              rebase(command, path(childState.value), action.embed),
+            ...(result.effects ?? []).map((effect) =>
+              rebase(effect, path(childState.value), action.embed),
             ),
             ...(parent.effects ?? []),
           ],
@@ -429,7 +444,7 @@ export interface ForEach<S, A, CS, CA, CR> {
 }
 
 /**
- * Composes a map of independent children. Removed IDs lose their command lifetime.
+ * Composes a map of independent children. Removed IDs lose their effect lifetime.
  * Map iteration order does not affect identity. Treat maps and entries as immutable.
  * Use the descriptor's `at(id)` to scope a store to one mounted entry. The two-call
  * form accepts checked state property and action tag names.
@@ -492,8 +507,8 @@ export function forEach<S, A, CS, CA, CR>(
         return {
           state: parent.state,
           effects: [
-            ...(result.effects ?? []).map((command) =>
-              rebase(command, [action.key, id], (child) => action.embed({ id, action: child })),
+            ...(result.effects ?? []).map((effect) =>
+              rebase(effect, [action.key, id], (child) => action.embed({ id, action: child })),
             ),
             ...(parent.effects ?? []),
           ],

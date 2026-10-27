@@ -5,7 +5,7 @@ handlers. A feature definition can create many independent stores. Each store's
 scope owns its work and subscriptions.
 
 ```ts
-import { Command, Feature, Store } from "@yielded/tca";
+import { Feature, FeatureEffect, Store } from "@yielded/tca";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
@@ -24,13 +24,13 @@ const Timer = Feature.make({
         Stream.tick("1 second").pipe(
           Stream.drop(1),
           Stream.map(() => Action.cases.Tick.make({})),
-          Command.latest("timer"),
+          FeatureEffect.replace({ cancellationKey: "timer" }),
         ),
       ],
     }),
     Stop: (state) => ({
       state: { ...state, running: false },
-      effects: [Command.cancel("timer")],
+      effects: [FeatureEffect.cancel({ cancellationKey: "timer" })],
     }),
     Tick: (state) => ({ state: { ...state, seconds: state.seconds + 1 } }),
   },
@@ -42,13 +42,23 @@ Annotate the initializer's return type when empty collections, optional values,
 or literals need a wider state type. For plain TypeScript actions or a custom
 reducer, use `Feature.make<State, Action>()({ initial, reduce })` instead.
 
-Return work in the `effects` array using the `Command` builders.
-`Command.run` starts independent work. `Command.latest` replaces work with the
-same key in that feature instance. For one response, pass an Effect returning
-an action; for multiple emissions, pass a Stream. Each emission waits for its
-state transition to commit. The timer drops `Stream.tick`'s immediate first
-emission to wait a full second. A callback receiving `send` is also available
-for custom workflows. Hot event sources still need bounded buffering.
+Return an Effect or Stream directly in `effects`. An Effect returns one action;
+a Stream emits actions sequentially. All work is scoped to its mounted feature
+and is interrupted when that feature disappears. Resource acquisition can use
+the execution's supplied Scope. Each emission waits for its state transition
+to commit.
+
+The timer has a cancellation key because Stop must end it while the feature is
+still mounted. `FeatureEffect.replace` also stops the previous timer if Start
+is sent again. Keys belong to one feature instance; siblings do not cancel each
+other. Cancelled work cannot commit already queued actions. A timer that only
+ends when its feature disappears needs no key or wrapper, as in the
+[search example](../examples/search/README.md).
+
+The timer drops `Stream.tick`'s immediate first emission to wait a full second.
+Use `FeatureEffect.withSend(send => program)` when a workflow needs explicit
+acknowledged sends, or `Stream.fromEffectDrain` for work that emits no action.
+Hot event sources still need bounded buffering.
 Use ordinary Effect services inside effects, including `Service.use`, and
 provide their Layers when creating a store. Convert expected failures into
 application actions with `Effect.match` or the Stream error operators.
@@ -174,8 +184,8 @@ The [search application](../examples/search/README.md) shows the complete setup.
 
 ## TestStore
 
-Supply the test runner's deep-equality assertion. TestStore holds command actions
-until you receive them, using the same reducer and command runtime as Store.
+Supply the test runner's deep-equality assertion. TestStore holds effect actions
+until you receive them, using the same reducer and effect runtime as Store.
 
 ```ts
 import assert from "node:assert/strict";

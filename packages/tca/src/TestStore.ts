@@ -112,14 +112,14 @@ export const make = Effect.fnUntraced(function* <S, A, R, I>(
       if (active > 0)
         return yield* StoreError.make({
           reason: "Assertion",
-          message: `${active} command(s) are still running`,
+          message: "Effects or their cleanup are still running",
         });
     }),
   };
 });
 
 /**
- * Runs a scoped scenario and checks for pending actions and commands when it succeeds.
+ * Runs a scoped scenario and checks for pending actions and effects when it succeeds.
  * Returns the scenario's result. On failure, preserves its error without running finish.
  * Disposal always closes the store; clock advancement remains the caller's responsibility.
  * @category constructors

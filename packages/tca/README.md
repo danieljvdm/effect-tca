@@ -29,8 +29,10 @@ Reuse child descriptors with `Store.scope` or `FeatureAtom.scope` to give each
 component only its own state and actions.
 
 Effects never write state directly. Stores serialize actions and run effects
-after committing state. Disposing the store scope ends its effects and
-subscriptions. Stores do not provide persistence or distributed delivery.
+after committing state. Return native Effects or Streams in a reducer's `effects`
+array; the feature supplies their resource scope. Use `FeatureEffect` for named
+replacement, cancellation, or explicit sends. Disposing the store scope ends its
+effects and subscriptions. Stores do not provide persistence or distributed delivery.
 
 See the [guide](https://github.com/yielded-dev/tca/blob/main/docs/GUIDE.md)
 and [search example](https://github.com/yielded-dev/tca/tree/main/examples/search).

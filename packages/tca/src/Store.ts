@@ -51,7 +51,7 @@ export type Options<S, I = void> = {
 
 /**
  * Captures the feature's dependencies and runs it within the caller's scope.
- * Reducer and command defects close the store; expected failures belong in actions.
+ * Reducer and effect defects close the store; expected failures belong in actions.
  * Invalid capacity or a throwing initializer fails with StoreError.
  * @category constructors
  * @since 0.1.0-beta.0

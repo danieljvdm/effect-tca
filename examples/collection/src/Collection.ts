@@ -1,4 +1,4 @@
-import { Command, Feature } from "@yielded/tca";
+import { Feature, FeatureEffect } from "@yielded/tca";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 
@@ -16,7 +16,7 @@ export const Ticker = Feature.make({
         Stream.tick("100 millis").pipe(
           Stream.drop(1),
           Stream.map(() => TickerAction.cases.Tick.make({})),
-          Command.latest("tick"),
+          FeatureEffect.replace({ cancellationKey: "tick" }),
         ),
       ],
     }),

@@ -3,8 +3,8 @@
 Composable state and scoped effects for TypeScript, built on Effect.
 
 A feature owns immutable state, actions, and a synchronous reducer. Its effects
-run as Effect programs and send actions back to the store. Features compose into
-larger features, and child lifetimes cancel their work when they disappear.
+are native Effect programs or Streams that send actions back to the store.
+Features compose into larger features, and child lifetimes cancel their work when they disappear.
 The same child descriptors scope stores and Atom bindings for reusable views.
 
 ```ts
