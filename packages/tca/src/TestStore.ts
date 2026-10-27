@@ -1,6 +1,6 @@
 /**
  * Stepwise assertions over the production store runtime.
- * @since 0.1.0-beta.0
+ * @since 0.0.1
  */
 import type * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -16,7 +16,7 @@ import { StoreError } from "./StoreError.ts";
  * Assertions for a feature's actions and complete state snapshots.
  * Call finish before leaving the scope to detect unfinished work.
  * @category models
- * @since 0.1.0-beta.0
+ * @since 0.0.1
  */
 export interface TestStore<S, A> {
   readonly get: Effect.Effect<S, StoreError>;
@@ -30,7 +30,7 @@ export interface TestStore<S, A> {
  * The receive timeout defaults to five seconds on the caller's Effect clock.
  * With a TestClock, advance time explicitly; the test runner still owns wall timeouts.
  * @category models
- * @since 0.1.0-beta.0
+ * @since 0.0.1
  */
 export type Options<S, I = void> = Store.Options<S, I> & {
   readonly assertEquals: (actual: unknown, expected: unknown) => void;
@@ -41,7 +41,7 @@ export type Options<S, I = void> = Store.Options<S, I> & {
  * Runs a feature with held effect emissions and exhaustive snapshot assertions.
  * Expected state defaults to unchanged. Assertion failures retain their original cause.
  * @category constructors
- * @since 0.1.0-beta.0
+ * @since 0.0.1
  */
 export const make = Effect.fnUntraced(function* <S, A, R, I>(
   feature: Feature.Definition<S, A, R, I>,
@@ -123,7 +123,7 @@ export const make = Effect.fnUntraced(function* <S, A, R, I>(
  * Returns the scenario's result. On failure, preserves its error without running finish.
  * Disposal always closes the store; clock advancement remains the caller's responsibility.
  * @category constructors
- * @since 0.1.0-beta.0
+ * @since 0.0.1
  */
 export const scenario: <S, A, R, I, B, E, R2>(
   feature: Feature.Definition<S, A, R, I>,

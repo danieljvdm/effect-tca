@@ -28,7 +28,7 @@ interface Origin {
 }
 
 /** @internal */
-export const ScopeTypeId: unique symbol = Symbol.for("@yielded/tca/Store/scope");
+export const ScopeTypeId: unique symbol = Symbol.for("effect-tca/Store/scope");
 
 export interface Message<A> {
   readonly action: A;

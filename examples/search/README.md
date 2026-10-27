@@ -1,6 +1,6 @@
 # Search example
 
-Fieldnotes is a small React application using `@yielded/tca/atom`.
+Fieldnotes is a small React application using `effect-tca/atom`.
 
 ```sh
 vp install

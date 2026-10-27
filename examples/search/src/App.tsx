@@ -1,5 +1,5 @@
 import { useAtomSet, useAtomSuspense } from "@effect/atom-react";
-import { FeatureAtom } from "@yielded/tca/atom";
+import { FeatureAtom } from "effect-tca/atom";
 import * as Option from "effect/Option";
 import * as Atom from "effect/reactivity/Atom";
 import { Suspense, useEffect, useRef, useState } from "react";
@@ -162,7 +162,7 @@ export function Fieldnotes() {
       </Suspense>
       <footer>
         <span>A notebook, not a feed.</span>
-        <a href="https://github.com/yielded-dev/tca">An Effect TCA example ↗</a>
+        <a href="https://github.com/danieljvdm/effect-tca">An Effect TCA example ↗</a>
       </footer>
       <dialog
         ref={dialog}

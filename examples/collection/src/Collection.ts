@@ -1,4 +1,4 @@
-import { Feature } from "@yielded/tca";
+import { Feature } from "effect-tca";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 

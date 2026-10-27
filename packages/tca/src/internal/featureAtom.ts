@@ -9,7 +9,7 @@ import type * as Feature from "../Feature.ts";
 import * as Store from "../Store.ts";
 import { StoreError } from "../StoreError.ts";
 
-export const SessionTypeId: unique symbol = Symbol.for("@yielded/tca/atom/session");
+export const SessionTypeId: unique symbol = Symbol.for("effect-tca/atom/session");
 
 export type Session<S, A, E> = Atom.Atom<
   AsyncResult.AsyncResult<Store.Store<S, A>, E | StoreError>

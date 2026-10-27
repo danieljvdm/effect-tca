@@ -22,8 +22,8 @@
     "examples/collection": {
       "name": "tca-collection-example",
       "dependencies": {
-        "@yielded/tca": "workspace:*",
         "effect": "catalog:",
+        "effect-tca": "workspace:*",
       },
       "devDependencies": {
         "typescript": "catalog:",
@@ -35,8 +35,8 @@
       "name": "tca-search-example",
       "dependencies": {
         "@effect/atom-react": "catalog:",
-        "@yielded/tca": "workspace:*",
         "effect": "catalog:",
+        "effect-tca": "workspace:*",
         "react": "catalog:",
         "react-dom": "catalog:",
       },
@@ -50,8 +50,8 @@
       },
     },
     "packages/tca": {
-      "name": "@yielded/tca",
-      "version": "0.1.0-beta.0",
+      "name": "effect-tca",
+      "version": "0.0.1",
       "dependencies": {
         "immer": "catalog:",
       },
@@ -468,8 +468,6 @@
 
     "@yielded/effect-tsrs-win32-x64": ["@yielded/effect-tsrs-win32-x64@0.2.2", "", { "os": "win32", "cpu": "x64" }, "sha512-5Vb0JusFTEPUJ6LREP94qO2hX4gMMTx06cg7dPt5OU9Xb0eiBcqi1m8xegw3maK1fEFc8rd2hYN+ikTleSlPDw=="],
 
-    "@yielded/tca": ["@yielded/tca@workspace:packages/tca"],
-
     "@yuku-core/binding-android-arm64": ["@yuku-core/binding-android-arm64@0.19.0", "", { "os": "android", "cpu": "arm64" }, "sha512-wdL2XmTiZixAOaHk9Z0JJZ8u9Qm8d333Zjpc6gaxXFX+UR5BlsfxZ7a2+2Rm71pamppsPYGUGFq2oVLbh6DISw=="],
 
     "@yuku-core/binding-darwin-arm64": ["@yuku-core/binding-darwin-arm64@0.19.0", "", { "os": "darwin", "cpu": "arm64" }, "sha512-7sNJa6XJhyetnTy64jw3NEi4YgUcezHk1G5GH9FSvXAuC8wIlbaOwT9lgq5qo5sspjrZJQlBR1TWflP49uRpMw=="],
@@ -537,6 +535,8 @@
     "dom-accessibility-api": ["dom-accessibility-api@0.5.16", "", {}, "sha512-X7BJ2yElsnOJ30pZF4uIIDfBEVgF4XEBxL9Bxhy6dnrm5hkzqmsWHGTiHqRiITNhMyFLyAiWndIJP7Z1NTteDg=="],
 
     "effect": ["effect@4.0.6", "", {}, "sha512-Tc3mkzuLR6t6P9dhLt0D2GrxYtmU5td4XEJEiXCmILz53IRIfJyHsKZWjTA3xEjiwpNTtXBgI4iqYPxMztBDrw=="],
+
+    "effect-tca": ["effect-tca@workspace:packages/tca"],
 
     "es-module-lexer": ["es-module-lexer@2.3.2", "", {}, "sha512-poHGpORABojJJucnV9KbOavETW8lBVnphkW77ER5/BQ5Fz7oXSoCNek7IH3vR5nRjdsEz926ibFYX8KtLQmdyw=="],
 

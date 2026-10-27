@@ -1,0 +1,101 @@
+name: Release
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-main
+  cancel-in-progress: false
+
+env:
+  CI: "true"
+  VP_GIT_HOOKS: "0"
+
+jobs:
+  prepare:
+    if: github.repository == 'danieljvdm/effect-tca' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    outputs:
+      mode: ${{ steps.mode.outputs.mode }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Set up pinned toolchain
+        uses: ./.github/actions/setup-ci
+      - name: Select release operation
+        id: mode
+        uses: changesets/action/select-mode@ae32849d5ba541f9ae29e40e22a623bc13562f51 # v2.1.2
+      - name: Verify and pack release
+        if: steps.mode.outputs.mode == 'publish'
+        run: vp run ready
+      - name: Save verified package
+        if: steps.mode.outputs.mode == 'publish'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: release-${{ github.sha }}
+          path: .release/tca.tgz
+          if-no-files-found: error
+          include-hidden-files: true
+          compression-level: 0
+          retention-days: 1
+
+  version:
+    needs: prepare
+    if: needs.prepare.outputs.mode == 'version'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Set up pinned toolchain
+        uses: ./.github/actions/setup-ci
+      - name: Create or update release PR
+        uses: changesets/action/version@ae32849d5ba541f9ae29e40e22a623bc13562f51 # v2.1.2
+        with:
+          script: vp run release:version
+          pr-title: "chore: release packages"
+          commit-message: "chore: release packages"
+
+  publish:
+    needs: prepare
+    if: needs.prepare.outputs.mode == 'publish'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: npm
+    permissions:
+      contents: write
+      id-token: write
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Set up pinned toolchain
+        uses: ./.github/actions/setup-ci
+      - name: Download verified package
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: release-${{ github.sha }}
+          path: .release
+      - name: Publish package and create release
+        uses: changesets/action/publish@ae32849d5ba541f9ae29e40e22a623bc13562f51 # v2.1.2
+        with:
+          script: vp run release:publish
+          create-github-releases: true
+          push-git-tags: true

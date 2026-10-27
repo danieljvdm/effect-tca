@@ -1,6 +1,6 @@
 /**
  * Scoped runtimes for feature definitions.
- * @since 0.1.0-beta.0
+ * @since 0.0.1
  */
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
@@ -18,7 +18,7 @@ import { StoreError } from "./StoreError.ts";
  * A running feature. Snapshots are immutable and subscriptions may coalesce
  * intermediate states. Scope disposal interrupts work and ends subscriptions.
  * @category models
- * @since 0.1.0-beta.0
+ * @since 0.0.1
  */
 export interface Store<S, A> {
   readonly get: Effect.Effect<S, StoreError>;
@@ -39,7 +39,7 @@ export interface Store<S, A> {
  * Supply input when the initializer requires it, or provide initialState to bypass
  * initialization. When both are present, initialState takes precedence.
  * @category models
- * @since 0.1.0-beta.0
+ * @since 0.0.1
  */
 export type Options<S, I = void> = {
   readonly capacity?: number;
@@ -54,7 +54,7 @@ export type Options<S, I = void> = {
  * Reducer and effect defects close the store; expected failures belong in actions.
  * Invalid capacity or a throwing initializer fails with StoreError.
  * @category constructors
- * @since 0.1.0-beta.0
+ * @since 0.0.1
  */
 export const make: <S, A, R, I>(
   feature: Feature.Definition<S, A, R, I>,
@@ -68,7 +68,7 @@ export const make: <S, A, R, I>(
  * defaults, without its discriminator. Cases with no required payload fields
  * can be called without an argument.
  * @category models
- * @since 0.1.0-beta.0
+ * @since 0.0.1
  */
 export type BoundActions<Cases extends Record<string, Schema.Constraint>> = {
   readonly [K in keyof Cases]: (
@@ -84,7 +84,7 @@ export type BoundActions<Cases extends Record<string, Schema.Constraint>> = {
  * commit through this store. Schema failures do not dispatch. Binding or calling
  * a sender does no work; scoped senders retain their original child lifetime.
  * @category combinators
- * @since 0.1.0-beta.0
+ * @since 0.0.1
  */
 export const bindActions: <S, A, Cases extends Record<string, Schema.Schema<NoInfer<A>>>>(
   store: Store<S, A>,
@@ -98,7 +98,7 @@ export const bindActions: <S, A, Cases extends Record<string, Schema.Schema<NoIn
  * fail with MissingChild, and its subscriptions and `closed` complete. Re-scope
  * the parent to obtain a handle for a new lifetime, even when its ID is reused.
  * @category combinators
- * @since 0.1.0-beta.0
+ * @since 0.0.1
  */
 export function scope<S, A, CS, CA>(
   store: Store<S, A>,

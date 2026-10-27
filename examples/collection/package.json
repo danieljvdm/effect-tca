@@ -8,8 +8,8 @@
     "typecheck": "effect-tsrs diagnostics --project tsconfig.json --type-check --strict"
   },
   "dependencies": {
-    "@yielded/tca": "workspace:*",
-    "effect": "catalog:"
+    "effect": "catalog:",
+    "effect-tca": "workspace:*"
   },
   "devDependencies": {
     "typescript": "catalog:",

@@ -1,7 +1,7 @@
 # Public API contracts
 
-`@yielded/tca` provides synchronous feature reducers, scoped effects and stores,
-and a TestStore. `@yielded/tca/atom` adapts the same store to Effect Atom.
+`effect-tca` provides synchronous feature reducers, scoped effects and stores,
+and a TestStore. `effect-tca/atom` adapts the same store to Effect Atom.
 Applications own state and action types, service implementations, and views.
 `Feature.make` accepts an action `Schema.TaggedUnion`, an initializer, and `reduce`
 as an exhaustive handler map or a single function. Reducers edit a synchronous

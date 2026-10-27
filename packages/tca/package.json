@@ -1,11 +1,11 @@
 {
-  "name": "@yielded/tca",
-  "version": "0.1.0-beta.0",
+  "name": "effect-tca",
+  "version": "0.0.1",
   "description": "Composable state, scoped effects, and feature testing for Effect.",
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/yielded-dev/tca.git",
+    "url": "git+https://github.com/danieljvdm/effect-tca.git",
     "directory": "packages/tca"
   },
   "files": [

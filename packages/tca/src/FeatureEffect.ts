@@ -1,6 +1,6 @@
 /**
  * Native Effect programs and streams owned by a mounted feature.
- * @since 0.1.0-beta.0
+ * @since 0.0.1
  */
 import type * as Effect from "effect/Effect";
 import type * as Schema from "effect/Schema";
@@ -12,14 +12,14 @@ import { normalize } from "./internal/featureEffect.ts";
 /**
  * Names replaceable work within one mounted feature instance.
  * @category models
- * @since 0.1.0-beta.0
+ * @since 0.0.1
  */
 export type CancellationKey = string | symbol;
 
 /**
  * Selects work belonging to the current feature instance. Siblings have separate keys.
  * @category models
- * @since 0.1.0-beta.0
+ * @since 0.0.1
  */
 export interface CancellationOptions {
   readonly cancellationKey: CancellationKey;
@@ -28,7 +28,7 @@ export interface CancellationOptions {
 /**
  * Sends an action and waits for its transition to commit. Closed lifetimes cannot emit.
  * @category models
- * @since 0.1.0-beta.0
+ * @since 0.0.1
  */
 export type Send<A> = (action: A) => Effect.Effect<void>;
 
@@ -36,7 +36,7 @@ export type Send<A> = (action: A) => Effect.Effect<void>;
  * An Effect emits its result once; a Stream emits each element sequentially.
  * Handle expected failures with native operators before returning the program.
  * @category models
- * @since 0.1.0-beta.0
+ * @since 0.0.1
  */
 export type Program<A, R = never> = Effect.Effect<A, never, R> | Stream.Stream<A, never, R>;
 
@@ -45,21 +45,21 @@ export type Program<A, R = never> = Effect.Effect<A, never, R> | Stream.Stream<A
  * with its owning feature lifetime. Stream emissions wait for each action to commit;
  * bound buffering separately for hot producers. Unexpected failures close the store.
  * @category models
- * @since 0.1.0-beta.0
+ * @since 0.0.1
  */
 export type FeatureEffect<A, R = never> = Program<A, R | Scope.Scope> | Run<A, R> | Cancel;
 
 /**
  * The explicit result of a draft reducer: start work, cancel work, or do neither.
  * @category models
- * @since 0.1.0-beta.0
+ * @since 0.0.1
  */
 export type ReducerEffect<A, R = never> = Run<A, R> | Cancel | None;
 
 /**
  * A reducer result that starts no asynchronous work. Return the context's `none`.
  * @category models
- * @since 0.1.0-beta.0
+ * @since 0.0.1
  */
 export interface None {
   /** @internal */
@@ -72,7 +72,7 @@ export interface None {
  * constructed payloads are defects; handle untrusted input before sending it.
  * Senders belong to their execution and cannot emit after its lifetime closes.
  * @category models
- * @since 0.1.0-beta.0
+ * @since 0.0.1
  */
 export type Senders<Cases extends Record<string, Schema.Constraint>> = {
   readonly [K in keyof Cases]: (
@@ -88,7 +88,7 @@ export type Senders<Cases extends Record<string, Schema.Constraint>> = {
  * Handle expected failures inside the workflow; send actions to change state after
  * the synchronous reducer has returned.
  * @category models
- * @since 0.1.0-beta.0
+ * @since 0.0.1
  */
 export interface Context<Cases extends Record<string, Schema.Constraint>> {
   /** Complete the transition without starting asynchronous work. */
@@ -115,7 +115,7 @@ export interface Context<Cases extends Record<string, Schema.Constraint>> {
  * Explicit action delivery or named replacement. Construct through a reducer
  * context, withSend, or replace.
  * @category models
- * @since 0.1.0-beta.0
+ * @since 0.0.1
  */
 export interface Run<A, R = never> {
   /** @internal */
@@ -131,7 +131,7 @@ export interface Run<A, R = never> {
 /**
  * Cancels named work, including its queued actions. Construct with cancel.
  * @category models
- * @since 0.1.0-beta.0
+ * @since 0.0.1
  */
 export interface Cancel {
   /** @internal */
@@ -147,7 +147,7 @@ export interface Cancel {
  * The callback runs after the reducer commits, within its own resource scope.
  * Use native Effects and Streams directly when their returned actions suffice.
  * @category constructors
- * @since 0.1.0-beta.0
+ * @since 0.0.1
  */
 export function withSend<A, R>(
   program: (send: Send<A>) => Effect.Effect<void, never, R>,
@@ -165,7 +165,7 @@ export function withSend<A, R>(
  * this mounted feature. Use native operators before this terminal adapter.
  * Supports replace(options, program) and program.pipe(replace(options)).
  * @category constructors
- * @since 0.1.0-beta.0
+ * @since 0.0.1
  */
 export function replace(
   options: CancellationOptions,
@@ -191,7 +191,7 @@ export function replace<A, R>(
  * Stops work with this feature-local cancellation key and rejects its queued actions.
  * A missing key is a no-op. Cleanup may continue after the cancelling action commits.
  * @category constructors
- * @since 0.1.0-beta.0
+ * @since 0.0.1
  */
 export const cancel = (options: CancellationOptions): Cancel => ({
   _tag: "Cancel",
