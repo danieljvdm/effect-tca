@@ -1,47 +1,112 @@
 # effect-tca
 
-Immutable feature reducers, scoped effects, typed child composition,
-and a TestStore for complete action and state assertions.
+Composable state and scoped effects for TypeScript, built on Effect.
+
+Features own state, actions, and synchronous reducers. Edit a temporary state
+draft, then return an effect. Async work sends actions back through the reducer.
 
 ```sh
 bun add effect-tca effect
 ```
 
+This focus timer starts once, even if `Started` arrives repeatedly. Pausing stops
+the ticking; starting again resumes from the same elapsed time.
+
 ```ts
-import { Feature, Store } from "effect-tca";
+import { Feature } from "effect-tca";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
-const Counter = Feature.make({
-  actions: Schema.TaggedUnion({ Incremented: {} }),
-  initial: () => ({ count: 0 }),
+const Focus = Feature.make({
+  actions: Schema.TaggedUnion({ Started: {}, Paused: {}, Tick: {} }),
+  initial: () => ({ seconds: 0, running: false }),
   reduce: {
-    Incremented: (state, _action, effect) => {
-      state.count += 1;
+    Started: (state, _action, effect) => {
+      if (state.running) return effect.none;
+      state.running = true;
+
+      return effect.replace(function* (send) {
+        while (true) {
+          yield* Effect.sleep("1 second");
+          yield* send.Tick();
+        }
+      });
+    },
+    Paused: (state, _action, effect) => {
+      state.running = false;
+
+      return effect.cancel("Started");
+    },
+    Tick: (state, _action, effect) => {
+      state.seconds += 1;
+
       return effect.none;
     },
   },
 });
-
-const program = Effect.gen(function* () {
-  const store = yield* Store.make(Counter);
-  const actions = Store.bindActions(store, Counter.actions);
-  yield* actions.Incremented();
-  return yield* store.get;
-}).pipe(Effect.scoped);
 ```
 
-Namespace exports are also available as direct imports such as
-`effect-tca/Feature`. Effect Atom bindings live in `effect-tca/atom`.
-Reuse child descriptors with `Store.scope` or `FeatureAtom.scope` to give each
-component only its own state and actions.
+Starting is idempotent because the reducer commits `running = true` before the
+effect starts. Further `Started` actions return `effect.none`. `effect.replace`
+owns the timer under the `Started` action, so `Paused` can cancel it by name.
+Only `Tick` edits the elapsed time; the async loop never holds a state draft.
 
-Reducers edit temporary drafts and return `effect.none`, `effect.run`, or
-`effect.replace`. Async work receives typed action senders; only reducers change
-state. Stores serialize actions and start work after committing state. Replacing
-work cancels the previous execution for that action tag in the mounted feature.
-Disposing the store scope ends its effects and subscriptions. Stores do not
-provide persistence or distributed delivery.
+For React, add `@effect/atom-react`, `react`, and `react-dom` with `bun add`.
+Create the binding once, outside render:
+
+```tsx
+import { RegistryProvider, useAtomSet, useAtomSuspense } from "@effect/atom-react";
+import { FeatureAtom } from "effect-tca/atom";
+import * as Layer from "effect/Layer";
+import * as Atom from "effect/reactivity/Atom";
+import { Suspense } from "react";
+
+const timer = FeatureAtom.bind(Focus, {
+  runtime: Atom.runtime(Layer.empty),
+});
+
+function FocusTimer() {
+  const result = useAtomSuspense(timer.state, { includeFailure: true });
+  const send = useAtomSet(timer.send);
+
+  if (result._tag === "Failure") {
+    return <p role="alert">The timer stopped unexpectedly.</p>;
+  }
+
+  const { seconds, running } = result.value;
+
+  return (
+    <section>
+      <h1>Time to focus</h1>
+      <output>{seconds}s focused</output>
+      <button onClick={() => send({ _tag: running ? "Paused" : "Started" })}>
+        {running ? "Pause" : "Start focusing"}
+      </button>
+    </section>
+  );
+}
+
+export function App() {
+  return (
+    <RegistryProvider>
+      <Suspense fallback={<p>Opening timer…</p>}>
+        <FocusTimer />
+      </Suspense>
+    </RegistryProvider>
+  );
+}
+```
+
+The Atom binding gives each registry its own store. React reads state and sends
+actions; releasing the last consumer disposes the store and cancels the timer.
+The same lifetime rules apply to composed child features: removing a child ends
+its work, and its queued actions cannot update a replacement.
+
+Namespace exports are also available as direct imports such as
+`effect-tca/Feature`. Core features and stores work without React; the Atom
+adapter lives in `effect-tca/atom`.
 
 See the [guide](https://github.com/danieljvdm/effect-tca/blob/main/docs/GUIDE.md)
-and [search example](https://github.com/danieljvdm/effect-tca/tree/main/examples/search).
+for composition and TestStore, and the
+[search example](https://github.com/danieljvdm/effect-tca/tree/main/examples/search)
+for a complete application.
