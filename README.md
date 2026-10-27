@@ -1,4 +1,4 @@
-# Yielded TCA
+# Effect TCA
 
 Composable state and scoped effects for TypeScript, built on Effect.
 

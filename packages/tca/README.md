@@ -43,5 +43,5 @@ work cancels the previous execution for that action tag in the mounted feature.
 Disposing the store scope ends its effects and subscriptions. Stores do not
 provide persistence or distributed delivery.
 
-See the [guide](https://github.com/yielded-dev/tca/blob/main/docs/GUIDE.md)
-and [search example](https://github.com/yielded-dev/tca/tree/main/examples/search).
+See the [guide](https://github.com/danieljvdm/effect-tca/blob/main/docs/GUIDE.md)
+and [search example](https://github.com/danieljvdm/effect-tca/tree/main/examples/search).

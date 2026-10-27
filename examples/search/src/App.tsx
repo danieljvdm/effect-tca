@@ -162,7 +162,7 @@ export function Fieldnotes() {
       </Suspense>
       <footer>
         <span>A notebook, not a feed.</span>
-        <a href="https://github.com/yielded-dev/tca">An Effect TCA example ↗</a>
+        <a href="https://github.com/danieljvdm/effect-tca">An Effect TCA example ↗</a>
       </footer>
       <dialog
         ref={dialog}
