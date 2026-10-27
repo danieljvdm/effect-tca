@@ -3,6 +3,12 @@
 `@yielded/tca` provides synchronous feature reducers, commands, scoped stores,
 and a TestStore. `@yielded/tca/atom` adapts the same store to Effect Atom.
 Applications own state and action types, service implementations, and views.
+`Feature.make` also accepts an action `Schema.TaggedUnion`, an initializer, and
+an exhaustive `cases` map. It infers action payloads, state, initializer input,
+and the combined command requirements. The schema remains available as
+`feature.actions`. State annotations widen empty collections and optional values.
+The existing typed reducer constructor remains available; declaring an action
+schema does not add validation to ordinary store dispatch.
 Feature initializers may require input. Store creation then requires that input
 or an explicit initial state; child composition never calls the initializer.
 
@@ -30,8 +36,11 @@ a replacement child. Child subscriptions end when that lifetime ends.
 Dynamic Atom bindings belong to the registry that produced them; another
 registry rejects them instead of sharing state across registry boundaries.
 
-Commands accept an Effect returning one action, or a callback receiving `send`
-for multiple emissions. Command keys are local to a feature instance. `latest`
+Commands accept an Effect returning one action, a Stream of actions, or a callback
+receiving `send` for multiple emissions. Streams send sequentially and wait for
+each action to commit; the command owns stream resources. Expected Effect and
+Stream errors must be handled before constructing the command. `latest` and
+`map` support direct and curried pipeline calls. Command keys are local to a feature instance. `latest`
 invalidates the previous execution before starting its replacement; `cancel`
 also fences already queued
 actions. Each execution has its own Effect scope. Dependencies are captured when
@@ -41,6 +50,10 @@ the store is created. The caller's scope owns the store and its finalizers.
 does not wait for those commands to finish. Action queues apply backpressure;
 snapshot subscriptions retain the latest state and may coalesce intermediate
 states. Reducers must not mutate earlier states or perform external work.
+`Store.bindActions(store, actions)` derives payload-taking senders from an action
+schema. Each returns an Effect that validates the constructor input and sends
+through that store. Schema failures are typed and do not dispatch; scoped-store
+lifetime checks still apply. Binding and constructing the Effect do no work.
 
 TestStore uses the same runtime but holds effect emissions until `receive`.
 The caller supplies the test runner's deep equality assertion. Each send and

@@ -1,8 +1,21 @@
 import * as Optic from "effect/Optic";
 import * as Option from "effect/Option";
+import { pipeArguments } from "effect/Pipeable";
 import * as Predicate from "effect/Predicate";
 
-import type { Route } from "../Feature.ts";
+import type { Definition, Route, Transition } from "../Feature.ts";
+
+export const makeDefinition = <S, A, R = never, I = void>(spec: {
+  readonly initial: (input: I) => S;
+  readonly reduce: (state: S, action: A) => Transition<S, A, R>;
+}): Definition<S, A, R, I> => ({
+  ...spec,
+  lifetimes: () => [[]],
+  routes: [],
+  pipe() {
+    return pipeArguments(this, arguments);
+  },
+});
 
 export const stateLens = <S, CS>(state: Optic.Lens<S, CS> | keyof S): Optic.Lens<S, CS> =>
   Predicate.isPropertyKey(state)

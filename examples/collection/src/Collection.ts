@@ -1,39 +1,40 @@
 import { Command, Feature } from "@yielded/tca";
-import * as Data from "effect/Data";
-import * as Effect from "effect/Effect";
+import * as Schema from "effect/Schema";
+import * as Stream from "effect/Stream";
 
-export type TickerAction = Data.TaggedEnum<{ Start: {}; Tick: {} }>;
-export const TickerAction = Data.taggedEnum<TickerAction>();
+export const TickerAction = Schema.TaggedUnion({ Start: {}, Tick: {} });
 
-export const Ticker = Feature.make<number, TickerAction>()({
+export type TickerAction = typeof TickerAction.Type;
+
+export const Ticker = Feature.make({
+  actions: TickerAction,
   initial: () => 0,
-  reduce: (state, action) =>
-    TickerAction.$match(action, {
-      Start: () => ({
-        state,
-        commands: [
-          Command.latest("tick", (send: Command.Send<TickerAction>) =>
-            Effect.forever(
-              Effect.sleep("100 millis").pipe(Effect.andThen(send(TickerAction.Tick()))),
-            ),
-          ),
-        ],
-      }),
-      Tick: () => ({ state: state + 1 }),
+  cases: {
+    Start: (state) => ({
+      state,
+      commands: [
+        Stream.tick("100 millis").pipe(
+          Stream.drop(1),
+          Stream.map(() => TickerAction.cases.Tick.make({})),
+          Command.latest("tick"),
+        ),
+      ],
     }),
+    Tick: (state) => ({ state: state + 1 }),
+  },
 });
 
 export interface State {
   readonly counters: ReadonlyMap<string, number>;
 }
 
-export type Action = Data.TaggedEnum<{
-  Counter: { readonly action: Feature.Identified<TickerAction> };
-  Remove: { readonly id: string };
-  Add: { readonly id: string };
-}>;
+export const Action = Schema.TaggedUnion({
+  Counter: { action: Schema.Struct({ id: Schema.String, action: TickerAction }) },
+  Remove: { id: Schema.String },
+  Add: { id: Schema.String },
+});
 
-export const Action = Data.taggedEnum<Action>();
+export type Action = typeof Action.Type;
 
 export const counters = Feature.forEach<State, Action>()({
   state: "counters",
@@ -41,29 +42,29 @@ export const counters = Feature.forEach<State, Action>()({
   feature: Ticker,
 });
 
-export const Collection = Feature.make<State, Action>()({
-  initial: () => ({
+export const Collection = Feature.make({
+  actions: Action,
+  initial: (): State => ({
     counters: new Map([
       ["left", 0],
       ["right", 0],
     ]),
   }),
-  reduce: (state, action) =>
-    Action.$match(action, {
-      Counter: () => ({ state }),
-      Remove: ({ id }) => {
-        const counters = new Map(state.counters);
+  cases: {
+    Counter: (state) => ({ state }),
+    Remove: (state, { id }) => {
+      const counters = new Map(state.counters);
 
-        counters.delete(id);
+      counters.delete(id);
 
-        return { state: { counters } };
-      },
-      Add: ({ id }) => {
-        const counters = new Map(state.counters);
+      return { state: { counters } };
+    },
+    Add: (state, { id }) => {
+      const counters = new Map(state.counters);
 
-        if (!counters.has(id)) counters.set(id, 0);
+      if (!counters.has(id)) counters.set(id, 0);
 
-        return { state: { counters } };
-      },
-    }),
+      return { state: { counters } };
+    },
+  },
 }).pipe(counters);

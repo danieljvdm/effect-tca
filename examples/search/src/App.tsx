@@ -1,8 +1,8 @@
-import { useAtomSet, useAtomValue } from "@effect/atom-react";
+import { useAtomSet, useAtomSuspense } from "@effect/atom-react";
 import { FeatureAtom } from "@yielded/tca/atom";
 import * as Option from "effect/Option";
 import * as Atom from "effect/reactivity/Atom";
-import { useEffect, useRef, useState } from "react";
+import { Suspense, useEffect, useRef, useState } from "react";
 
 import {
   App,
@@ -19,7 +19,7 @@ import {
 
 const binding = FeatureAtom.bind(App, { runtime: Atom.runtime(SearchApi.layer) });
 const search = FeatureAtom.scope(binding, searchChild);
-const details = FeatureAtom.scope(binding, detailChild);
+const details = FeatureAtom.scope(binding, detailChild).pipe(Atom.mapResult(Option.getOrUndefined));
 
 function SearchInput({
   initialQuery,
@@ -53,12 +53,8 @@ function SearchNotes({
   readonly feature: FeatureAtom.Binding<SearchState, SearchAction>;
   readonly onOpen: (note: Note) => void;
 }) {
-  const result = useAtomValue(feature.state);
+  const state = useAtomSuspense(feature.state).value;
   const send = useAtomSet(feature.send);
-
-  if (result._tag !== "Success") return <section aria-label="Search notes" aria-busy="true" />;
-
-  const state = result.value;
 
   return (
     <section aria-label="Search notes">
@@ -66,7 +62,7 @@ function SearchNotes({
         <span aria-hidden="true">⌕</span>
         <SearchInput
           initialQuery={state.query}
-          onQueryChange={(query) => send(SearchAction.QueryChanged({ query }))}
+          onQueryChange={(query) => send(SearchAction.cases.QueryChanged.make({ query }))}
         />
       </label>
       <div className="results-meta" aria-live="polite">
@@ -106,12 +102,8 @@ function NoteDetail({
   readonly feature: FeatureAtom.Binding<DetailState, DetailAction>;
   readonly onClose: () => void;
 }) {
-  const result = useAtomValue(feature.state);
+  const detail = useAtomSuspense(feature.state).value;
   const send = useAtomSet(feature.send);
-
-  if (result._tag !== "Success") return null;
-
-  const detail = result.value;
 
   return (
     <article>
@@ -125,7 +117,7 @@ function NoteDetail({
       <p>{detail.note.body}</p>
       <div className="timer">
         <span>Reading time: {detail.seconds}s</span>
-        <button disabled={detail.running} onClick={() => send(DetailAction.Started())}>
+        <button disabled={detail.running} onClick={() => send(DetailAction.cases.Started.make({}))}>
           {detail.running ? "Timer running" : "Start reading timer"}
         </button>
       </div>
@@ -134,13 +126,9 @@ function NoteDetail({
 }
 
 export function Fieldnotes() {
-  const result = useAtomValue(binding.state);
-  const detailResult = useAtomValue(details);
+  const detail = useAtomSuspense(details).value;
   const send = useAtomSet(binding.send);
   const dialog = useRef<HTMLDialogElement>(null);
-
-  const detail =
-    detailResult._tag === "Success" ? Option.getOrUndefined(detailResult.value) : undefined;
 
   const isOpen = detail !== undefined;
 
@@ -148,20 +136,6 @@ export function Fieldnotes() {
     if (isOpen) dialog.current?.showModal();
     else dialog.current?.close();
   }, [isOpen]);
-
-  if (result._tag === "Failure")
-    return (
-      <main>
-        <h1>Something went wrong</h1>
-        <p>Please reload to start a fresh session.</p>
-      </main>
-    );
-  if (result._tag !== "Success")
-    return (
-      <main aria-busy="true">
-        <p>Opening your notebook…</p>
-      </main>
-    );
 
   return (
     <main>
@@ -180,7 +154,12 @@ export function Fieldnotes() {
         </h1>
         <p>Notes from work, the everyday, and the long way home.</p>
       </section>
-      <SearchNotes feature={search} onOpen={(note) => send(AppAction.Opened({ note }))} />
+      <Suspense fallback={<section aria-label="Search notes" aria-busy="true" />}>
+        <SearchNotes
+          feature={search}
+          onOpen={(note) => send(AppAction.cases.Opened.make({ note }))}
+        />
+      </Suspense>
       <footer>
         <span>A notebook, not a feed.</span>
         <a href="https://github.com/yielded-dev/tca">An Effect TCA example ↗</a>
@@ -190,14 +169,16 @@ export function Fieldnotes() {
         aria-labelledby="note-title"
         onCancel={(event) => {
           event.preventDefault();
-          send(AppAction.Closed());
+          send(AppAction.cases.Closed.make({}));
         }}
         onClick={(event) => {
-          if (event.target === event.currentTarget) send(AppAction.Closed());
+          if (event.target === event.currentTarget) send(AppAction.cases.Closed.make({}));
         }}
       >
         {detail !== undefined && (
-          <NoteDetail feature={detail} onClose={() => send(AppAction.Closed())} />
+          <Suspense fallback={null}>
+            <NoteDetail feature={detail} onClose={() => send(AppAction.cases.Closed.make({}))} />
+          </Suspense>
         )}
       </dialog>
     </main>
