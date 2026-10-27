@@ -58,6 +58,9 @@
     "typecheck": "effect-tsrs diagnostics --project tsconfig.json --type-check --strict",
     "test": "vp test --passWithNoTests"
   },
+  "dependencies": {
+    "immer": "catalog:"
+  },
   "devDependencies": {
     "@effect/vitest": "catalog:",
     "effect": "catalog:",

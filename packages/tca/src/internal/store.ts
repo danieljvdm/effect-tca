@@ -76,8 +76,16 @@ export const makeRuntime = Effect.fnUntraced(function* <S, A, R, I>(
 
   let state = yield* Effect.try({
     // Public constructors require input or initialState when the initializer needs it.
-    try: () =>
-      "initialState" in options ? (options.initialState as S) : feature.initial(options.input as I),
+    try: () => {
+      const initial =
+        "initialState" in options
+          ? (options.initialState as S)
+          : feature.initial(options.input as I);
+
+      feature.prepare?.(initial);
+
+      return initial;
+    },
     catch: (cause) =>
       StoreError.make({ reason: "Reducer", message: "Feature initialization failed", cause }),
   });
@@ -286,6 +294,7 @@ export const makeRuntime = Effect.fnUntraced(function* <S, A, R, I>(
       try: () => {
         const result = feature.reduce(state, message.action);
 
+        feature.prepare?.(result.state);
         reconcile(result.state);
         state = result.state;
         PubSub.publishUnsafe(snapshots, state);

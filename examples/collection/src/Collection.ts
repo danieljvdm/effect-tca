@@ -1,4 +1,4 @@
-import { Feature, FeatureEffect } from "@yielded/tca";
+import { Feature } from "@yielded/tca";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 
@@ -6,26 +6,31 @@ export const TickerAction = Schema.TaggedUnion({ Start: {}, Tick: {} });
 
 export type TickerAction = typeof TickerAction.Type;
 
+export interface TickerState {
+  readonly count: number;
+}
+
 export const Ticker = Feature.make({
   actions: TickerAction,
-  initial: () => 0,
-  cases: {
-    Start: (state) => ({
-      state,
-      effects: [
-        Stream.tick("100 millis").pipe(
+  initial: (): TickerState => ({ count: 0 }),
+  reduce: {
+    Start: (_state, _action, effect) =>
+      effect.replace(function* (send) {
+        yield* Stream.tick("100 millis").pipe(
           Stream.drop(1),
-          Stream.map(() => TickerAction.cases.Tick.make({})),
-          FeatureEffect.replace({ cancellationKey: "tick" }),
-        ),
-      ],
-    }),
-    Tick: (state) => ({ state: state + 1 }),
+          Stream.runForEach(() => send.Tick()),
+        );
+      }),
+    Tick: (state, _action, effect) => {
+      state.count++;
+
+      return effect.none;
+    },
   },
 });
 
 export interface State {
-  readonly counters: ReadonlyMap<string, number>;
+  readonly counters: ReadonlyMap<string, TickerState>;
 }
 
 export const Action = Schema.TaggedUnion({
@@ -46,25 +51,21 @@ export const Collection = Feature.make({
   actions: Action,
   initial: (): State => ({
     counters: new Map([
-      ["left", 0],
-      ["right", 0],
+      ["left", Ticker.initial()],
+      ["right", Ticker.initial()],
     ]),
   }),
-  cases: {
-    Counter: (state) => ({ state }),
-    Remove: (state, { id }) => {
-      const counters = new Map(state.counters);
+  reduce: {
+    Counter: (_state, _action, effect) => effect.none,
+    Remove: (state, { id }, effect) => {
+      state.counters.delete(id);
 
-      counters.delete(id);
-
-      return { state: { counters } };
+      return effect.none;
     },
-    Add: (state, { id }) => {
-      const counters = new Map(state.counters);
+    Add: (state, { id }, effect) => {
+      if (!state.counters.has(id)) state.counters.set(id, Ticker.initial());
 
-      if (!counters.has(id)) counters.set(id, 0);
-
-      return { state: { counters } };
+      return effect.none;
     },
   },
 }).pipe(counters);

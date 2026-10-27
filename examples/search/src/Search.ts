@@ -1,4 +1,4 @@
-import { Feature, FeatureEffect } from "@yielded/tca";
+import { Feature } from "@yielded/tca";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -90,18 +90,29 @@ export type SearchAction = typeof SearchAction.Type;
 export const Search = Feature.make({
   actions: SearchAction,
   initial: (): SearchState => ({ query: "", loading: false, results: notes }),
-  cases: {
-    QueryChanged: (state, { query }) => ({
-      state: { ...state, query, loading: true },
-      effects: [
-        SearchApi.use((api) => api.search(query)).pipe(
-          Effect.delay("250 millis"),
-          Effect.map((results) => SearchAction.cases.ResultsLoaded.make({ results })),
-          FeatureEffect.replace({ cancellationKey: "search" }),
-        ),
-      ],
-    }),
-    ResultsLoaded: (state, { results }) => ({ state: { ...state, results, loading: false } }),
+  reduce: (state, action, effect) => {
+    switch (action._tag) {
+      case "QueryChanged": {
+        const { query } = action;
+
+        state.query = query;
+        state.loading = true;
+
+        return effect.replace(function* (send) {
+          yield* Effect.sleep("250 millis");
+          const searchApi = yield* SearchApi;
+          const results = yield* searchApi.search(query);
+
+          yield* send.ResultsLoaded({ results });
+        });
+      }
+      case "ResultsLoaded": {
+        state.results = [...action.results];
+        state.loading = false;
+
+        return effect.none;
+      }
+    }
   },
 });
 
@@ -118,21 +129,23 @@ export type DetailAction = typeof DetailAction.Type;
 export const Detail = Feature.make({
   actions: DetailAction,
   initial: (note: Note): DetailState => ({ note, seconds: 0, running: false }),
-  cases: {
-    Started: (state) => {
-      if (state.running) return { state };
+  reduce: {
+    Started: (state, _action, effect) => {
+      if (state.running) return effect.none;
+      state.running = true;
 
-      return {
-        state: { ...state, running: true },
-        effects: [
-          Stream.tick("1 second").pipe(
-            Stream.drop(1),
-            Stream.map(() => DetailAction.cases.Tick.make({})),
-          ),
-        ],
-      };
+      return effect.run(function* (send) {
+        yield* Stream.tick("1 second").pipe(
+          Stream.drop(1),
+          Stream.runForEach(() => send.Tick()),
+        );
+      });
     },
-    Tick: (state) => ({ state: { ...state, seconds: state.seconds + 1 } }),
+    Tick: (state, _action, effect) => {
+      state.seconds++;
+
+      return effect.none;
+    },
   },
 });
 
@@ -166,14 +179,19 @@ export const detailChild = Feature.optionalChild<AppState, AppAction>()({
 export const App = Feature.make({
   actions: AppAction,
   initial: (): AppState => ({ search: Search.initial(), detail: Option.none() }),
-  cases: {
-    Search: (state) => ({ state }),
-    Detail: (state) => ({ state }),
-    Opened: (state, { note }) => {
-      if (Option.isSome(state.detail) && state.detail.value.note.id === note.id) return { state };
+  reduce: {
+    Search: (_state, _action, effect) => effect.none,
+    Detail: (_state, _action, effect) => effect.none,
+    Opened: (state, { note }, effect) => {
+      if (Option.isSome(state.detail) && state.detail.value.note.id === note.id) return effect.none;
+      state.detail = Option.some(Detail.initial(note));
 
-      return { state: { ...state, detail: Option.some(Detail.initial(note)) } };
+      return effect.none;
     },
-    Closed: (state) => ({ state: { ...state, detail: Option.none() } }),
+    Closed: (state, _action, effect) => {
+      state.detail = Option.none();
+
+      return effect.none;
+    },
   },
 }).pipe(searchChild, detailChild);

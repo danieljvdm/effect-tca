@@ -12,12 +12,13 @@ Open the URL printed by Vite. Search for “travel”, change the query quickly,
 enter a query with no matches. Open a note and start its reading timer. Dismiss
 it with Close or Escape, then reopen it: the timer starts fresh.
 
-`Search.ts` defines action schemas, exhaustive feature handlers, and an in-memory
-SearchApi service. Search waits for a debounce interval and then a simulated API
-delay. `FeatureEffect.replace({ cancellationKey: "search" })` cancels the previous
-search when a newer query arrives. `App` embeds Search and an optional Detail
-feature, initialized with the selected note. Removing Detail
-cancels its timer Stream automatically; the timer needs no cancellation key.
+`Search.ts` defines action schemas, a switch-based search reducer, and an in-memory
+SearchApi service. Reducers edit a synchronous state draft and return an effect.
+Search waits for a debounce interval and then a simulated API delay.
+`effect.replace` cancels the previous QueryChanged execution when a newer query
+arrives; named sends carry results back into the reducer. App and Detail use
+handler maps under `reduce`. App embeds Search and an optional Detail initialized
+with the selected note. Removing Detail cancels its timer Stream automatically.
 
 `App.tsx` creates one Atom runtime and scopes its binding with the same child
 descriptors used by `App`. Search and detail components receive only their own

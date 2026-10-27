@@ -3,21 +3,32 @@
 `@yielded/tca` provides synchronous feature reducers, scoped effects and stores,
 and a TestStore. `@yielded/tca/atom` adapts the same store to Effect Atom.
 Applications own state and action types, service implementations, and views.
-`Feature.make` also accepts an action `Schema.TaggedUnion`, an initializer, and
-an exhaustive `cases` map. It infers action payloads, state, initializer input,
-and the combined effect requirements. The schema remains available as
-`feature.actions`. State annotations widen empty collections and optional values.
-The existing typed reducer constructor remains available; declaring an action
+`Feature.make` accepts an action `Schema.TaggedUnion`, an initializer, and `reduce`
+as an exhaustive handler map or a single function. Reducers edit a synchronous
+state draft and return one effect description. `effect.none` commits the edits
+without starting work. It infers action payloads, state, initializer input, and
+combined effect requirements. The schema remains available as `feature.actions`.
+State annotations widen empty collections and optional values. Declaring an action
 schema does not add validation to ordinary store dispatch.
 Feature initializers may require input. Store creation then requires that input
 or an explicit initial state; child composition never calls the initializer.
 
-A reducer returns the next immutable `state` and an optional `effects` array.
-An Effect returns one action; a Stream emits actions sequentially. Both can be
-returned directly. They run after the state commits and send actions through
-the same serialized store.
+Drafts are valid only during synchronous reduction. The resulting snapshot is
+immutable, and a failed reduction commits no state or effects. Capture ordinary
+values before returning asynchronous work; accessing an escaped draft fails.
+Effects run after the state commits and send actions through the same serialized store.
 Expected errors become application actions; unexpected effect or reducer
 failures close the store and remain observable through `closed` and `send`.
+
+Draft state supports plain objects, arrays, native Maps and Sets, and
+Immer-compatible classes, including `Schema.Class`. Snapshots are frozen at
+initialization and after dispatch, including a supplied `initialState`. Map keys
+and Effect `Option` contents are read-only; replace an Option as a whole.
+Cycles, accessors, functions, non-enumerable plain-object fields, and custom array,
+Map, or Set properties are unsupported. Supply Maps and Sets unfrozen or frozen
+by Immer; native `Object.freeze` does not protect their entries. Other
+non-draftable objects require the immutable reducer form. Draft mutation does
+not rerun schema validation. Copy readonly arrays when assigning to mutable draft fields.
 
 `Feature.child`, `optionalChild`, and `forEach` return reusable descriptors and
 route actions before the parent reducer runs. The typed builder forms accept
@@ -44,18 +55,25 @@ scope; programs can use `Effect.acquireRelease` without supplying a Scope themse
 Dependencies are captured when the store is created. The caller's scope owns
 the store and waits for its cleanup.
 
-Use `FeatureEffect.replace({ cancellationKey })` at the end of a program's pipeline
-to replace earlier work with that key. `FeatureEffect.cancel({ cancellationKey })`
-stops it without starting replacement work; a missing key is a no-op. Keys are
-local to one mounted feature instance. Both operations invalidate already queued
-actions immediately; cleanup may finish later. Unkeyed work needs neither helper.
+The reducer's `effect.run` starts independent work. `effect.replace` first revokes
+the previous replacement execution for the incoming action tag in this mounted
+feature. Function and map reducers use the same rule. Other action tags and
+sibling features are independent. `effect.cancel("Started")` stops replacement
+work owned by that action tag; a missing execution is a no-op. Replacement and
+cancellation invalidate already queued actions immediately; cleanup may finish later.
 
-Each emitted action waits for its state transition to commit. For an imperative
-workflow, `FeatureEffect.withSend(send => program)` provides the same acknowledged
-sender. Handle expected errors with native Effect or Stream operators before
-returning work. Use `Stream.fromEffectDrain` for work that emits no action; an
-Effect's result always represents an action, including `undefined`. Hot event
+`run` and `replace` accept a generator callback or a callback returning an Effect.
+The callback receives schema-derived senders such as `send.ResultsLoaded({ results })`.
+Each send is lazy and waits for its state transition to commit. Invalid internal
+action construction is a defect. Handle expected service errors with native Effect
+operators. Consume streams with `Stream.runForEach` and the same sender. Hot event
 sources still need bounded buffering.
+
+For explicit immutable updates and primitive state, `Feature.make<State, Action>()`
+retains a reducer returning `{ state, effects? }`. Its effects array accepts native
+Effects, Streams, and `FeatureEffect` descriptions. An Effect returns one action,
+including `undefined`; a Stream emits zero or more. `FeatureEffect.withSend` supplies
+an explicit sender, and `replace`/`cancel` use feature-local cancellation keys.
 
 `send` completes after its action commits and its effects are registered. It
 does not wait for those effects to finish. Action queues apply backpressure;

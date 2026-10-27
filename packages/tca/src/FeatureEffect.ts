@@ -3,6 +3,7 @@
  * @since 0.1.0-beta.0
  */
 import type * as Effect from "effect/Effect";
+import type * as Schema from "effect/Schema";
 import type * as Scope from "effect/Scope";
 import type * as Stream from "effect/Stream";
 
@@ -49,7 +50,70 @@ export type Program<A, R = never> = Effect.Effect<A, never, R> | Stream.Stream<A
 export type FeatureEffect<A, R = never> = Program<A, R | Scope.Scope> | Run<A, R> | Cancel;
 
 /**
- * Explicit action delivery or named replacement. Construct with withSend or replace.
+ * The explicit result of a draft reducer: start work, cancel work, or do neither.
+ * @category models
+ * @since 0.1.0-beta.0
+ */
+export type ReducerEffect<A, R = never> = Run<A, R> | Cancel | None;
+
+/**
+ * A reducer result that starts no asynchronous work. Return the context's `none`.
+ * @category models
+ * @since 0.1.0-beta.0
+ */
+export interface None {
+  /** @internal */
+  readonly _tag: "None";
+}
+
+/**
+ * Schema-derived action senders. Each Effect constructs and validates its action
+ * when executed, then waits for the transition to commit. Invalid internally
+ * constructed payloads are defects; handle untrusted input before sending it.
+ * Senders belong to their execution and cannot emit after its lifetime closes.
+ * @category models
+ * @since 0.1.0-beta.0
+ */
+export type Senders<Cases extends Record<string, Schema.Constraint>> = {
+  readonly [K in keyof Cases]: (
+    ...args: {} extends Omit<Cases[K]["~type.make.in"], "_tag">
+      ? [payload?: Omit<Cases[K]["~type.make.in"], "_tag">]
+      : [payload: Omit<Cases[K]["~type.make.in"], "_tag">]
+  ) => Effect.Effect<void>;
+};
+
+/**
+ * Effect constructors bound to the current action case and feature definition.
+ * Every execution receives its own resource scope, closed with its feature lifetime.
+ * Handle expected failures inside the workflow; send actions to change state after
+ * the synchronous reducer has returned.
+ * @category models
+ * @since 0.1.0-beta.0
+ */
+export interface Context<Cases extends Record<string, Schema.Constraint>> {
+  /** Complete the transition without starting asynchronous work. */
+  readonly none: None;
+  /** Start independent work after the transition commits. */
+  readonly run: {
+    <Yield extends Effect.Effect<unknown, never, unknown>>(
+      body: (send: Senders<Cases>) => Generator<Yield, void, never>,
+    ): Run<Cases[keyof Cases]["Type"], Exclude<Effect.Services<Yield>, Scope.Scope>>;
+    <R>(
+      body: (send: Senders<Cases>) => Effect.Effect<void, never, R>,
+    ): Run<Cases[keyof Cases]["Type"], Exclude<R, Scope.Scope>>;
+  };
+  /**
+   * Replace this action case's previous execution before starting work. Its queued
+   * actions are revoked too. Other cases and mounted feature instances are separate.
+   */
+  readonly replace: Context<Cases>["run"];
+  /** Cancel replaceable work started by the selected action tag. A missing execution is a no-op. */
+  readonly cancel: (tag: keyof Cases) => Cancel;
+}
+
+/**
+ * Explicit action delivery or named replacement. Construct through a reducer
+ * context, withSend, or replace.
  * @category models
  * @since 0.1.0-beta.0
  */
