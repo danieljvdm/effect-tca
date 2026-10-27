@@ -93,7 +93,7 @@ export const Search = Feature.make({
   cases: {
     QueryChanged: (state, { query }) => ({
       state: { ...state, query, loading: true },
-      commands: [
+      effects: [
         SearchApi.use((api) => api.search(query)).pipe(
           Effect.delay("250 millis"),
           Effect.map((results) => SearchAction.cases.ResultsLoaded.make({ results })),
@@ -121,7 +121,7 @@ export const Detail = Feature.make({
   cases: {
     Started: (state) => ({
       state: { ...state, running: true },
-      commands: [
+      effects: [
         Stream.tick("1 second").pipe(
           Stream.drop(1),
           Stream.map(() => DetailAction.cases.Tick.make({})),

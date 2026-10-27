@@ -2,7 +2,7 @@
 
 Composable state and scoped effects for TypeScript, built on Effect.
 
-A feature owns immutable state, actions, and a synchronous reducer. Its commands
+A feature owns immutable state, actions, and a synchronous reducer. Its effects
 run as Effect programs and send actions back to the store. Features compose into
 larger features, and child lifetimes cancel their work when they disappear.
 The same child descriptors scope stores and Atom bindings for reusable views.
@@ -31,7 +31,7 @@ const program = Effect.gen(function* () {
 Install with `bun add @yielded/tca effect`. Package manifests own compatibility.
 The [search example](examples/search/README.md) is a complete React application
 with debounced search, child composition, and a reading timer that ends when its
-detail is dismissed. [The guide](docs/GUIDE.md) covers commands, composition,
+detail is dismissed. [The guide](docs/GUIDE.md) covers effects, composition,
 Atom bindings, and TestStore.
 
 ## Development

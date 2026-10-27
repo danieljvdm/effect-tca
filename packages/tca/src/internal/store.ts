@@ -248,7 +248,7 @@ export const makeRuntime = Effect.fnUntraced(function* <S, A, R, I>(
       catch: (cause) => StoreError.make({ reason: "Reducer", message: "A reducer failed", cause }),
     });
 
-    for (const command of transition.commands ?? []) yield* launch(command);
+    for (const command of transition.effects ?? []) yield* launch(command);
     yield* Deferred.succeed(message.receipt, undefined);
   });
 

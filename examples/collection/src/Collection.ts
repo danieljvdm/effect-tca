@@ -12,7 +12,7 @@ export const Ticker = Feature.make({
   cases: {
     Start: (state) => ({
       state,
-      commands: [
+      effects: [
         Stream.tick("100 millis").pipe(
           Stream.drop(1),
           Stream.map(() => TickerAction.cases.Tick.make({})),
