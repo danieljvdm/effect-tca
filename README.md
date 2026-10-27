@@ -2,9 +2,10 @@
 
 Composable state and scoped effects for TypeScript, built on Effect.
 
-A feature owns immutable state, actions, and a synchronous reducer. Its effects
-run as Effect programs and send actions back to the store. Features compose into
-larger features, and child lifetimes cancel their work when they disappear.
+A feature owns immutable state, actions, and a synchronous reducer. Reducers
+edit temporary state drafts and return scoped Effect work that sends actions
+back to the store.
+Features compose into larger features, and child lifetimes cancel their work when they disappear.
 The same child descriptors scope stores and Atom bindings for reusable views.
 
 ```ts
@@ -15,8 +16,11 @@ import * as Schema from "effect/Schema";
 const Counter = Feature.make({
   actions: Schema.TaggedUnion({ Incremented: {} }),
   initial: () => ({ count: 0 }),
-  cases: {
-    Incremented: (state) => ({ state: { count: state.count + 1 } }),
+  reduce: {
+    Incremented: (state, _action, effect) => {
+      state.count += 1;
+      return effect.none;
+    },
   },
 });
 

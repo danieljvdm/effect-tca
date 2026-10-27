@@ -21,9 +21,9 @@
       "types": "./dist/index.d.mts",
       "import": "./dist/index.mjs"
     },
-    "./Command": {
-      "types": "./dist/Command.d.mts",
-      "import": "./dist/Command.mjs"
+    "./FeatureEffect": {
+      "types": "./dist/FeatureEffect.d.mts",
+      "import": "./dist/FeatureEffect.mjs"
     },
     "./Feature": {
       "types": "./dist/Feature.d.mts",
@@ -57,6 +57,9 @@
     "build": "vp pack",
     "typecheck": "effect-tsrs diagnostics --project tsconfig.json --type-check --strict",
     "test": "vp test --passWithNoTests"
+  },
+  "dependencies": {
+    "immer": "catalog:"
   },
   "devDependencies": {
     "@effect/vitest": "catalog:",

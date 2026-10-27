@@ -3,7 +3,10 @@ import * as Console from "effect/Console";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 
-import { Collection, counters, Ticker } from "./Collection.ts";
+import { Collection, counters, type State, Ticker } from "./Collection.ts";
+
+const snapshot = (state: State) =>
+  Object.fromEntries([...state.counters].map(([id, ticker]) => [id, ticker.count]));
 
 const program = Effect.gen(function* () {
   const store = yield* Store.make(Collection);
@@ -16,7 +19,7 @@ const program = Effect.gen(function* () {
   yield* leftActions.Start();
   yield* rightActions.Start();
   yield* Effect.sleep("350 millis");
-  yield* Console.log("Two independent tickers:", Object.fromEntries((yield* store.get).counters));
+  yield* Console.log("Two independent tickers:", snapshot(yield* store.get));
   yield* actions.Remove({ id: "left" });
   yield* actions.Add({ id: "left" });
   const stale = yield* Effect.flip(leftActions.Start());
@@ -25,10 +28,7 @@ const program = Effect.gen(function* () {
 
   yield* Console.log("The old left handle is rejected:", stale.reason);
   yield* Effect.sleep("250 millis");
-  yield* Console.log(
-    "Left was recreated; only right keeps ticking:",
-    Object.fromEntries((yield* store.get).counters),
-  );
+  yield* Console.log("Left was recreated; only right keeps ticking:", snapshot(yield* store.get));
 }).pipe(Effect.scoped);
 
 await Effect.runPromise(program);

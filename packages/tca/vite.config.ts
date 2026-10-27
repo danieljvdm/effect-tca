@@ -4,7 +4,7 @@ export default defineConfig({
   pack: {
     entry: {
       index: "src/index.ts",
-      Command: "src/Command.ts",
+      FeatureEffect: "src/FeatureEffect.ts",
       Feature: "src/Feature.ts",
       Store: "src/Store.ts",
       TestStore: "src/TestStore.ts",

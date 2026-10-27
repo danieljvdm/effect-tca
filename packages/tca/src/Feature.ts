@@ -1,14 +1,19 @@
 /**
- * Immutable feature definitions and typed child composition.
+ * Synchronous draft reducers, immutable feature definitions, and child composition.
  * @since 0.1.0-beta.0
  */
 import type * as Optic from "effect/Optic";
 import * as Option from "effect/Option";
 import type { Pipeable } from "effect/Pipeable";
 import type * as Schema from "effect/Schema";
+import type * as Scope from "effect/Scope";
+import type { Immutable } from "immer";
 
-import * as Command from "./Command.ts";
+import type * as FeatureEffect from "./FeatureEffect.ts";
+import { draftTransition, snapshot } from "./internal/draft.ts";
+import { createEffectContexts } from "./internal/effectContext.ts";
 import { actionRoute, makeDefinition, stateLens } from "./internal/feature.ts";
+import { normalize, type Operation } from "./internal/featureEffect.ts";
 import { StoreError } from "./StoreError.ts";
 
 /**
@@ -18,7 +23,7 @@ import { StoreError } from "./StoreError.ts";
  */
 export interface Transition<S, A, R = never> {
   readonly state: S;
-  readonly effects?: ReadonlyArray<Command.Command<A, R>>;
+  readonly effects?: ReadonlyArray<FeatureEffect.FeatureEffect<A, R>>;
 }
 
 /**
@@ -30,6 +35,8 @@ export interface Definition<S, A, R = never, I = void> extends Pipeable {
   /** Constructs fresh state. Features with required input cannot initialize without it. */
   readonly initial: (input: I) => S;
   readonly reduce: (state: S, action: A) => Transition<S, A, R>;
+  /** @internal Validates and freezes owned draft state before it becomes observable. */
+  readonly prepare?: (state: S) => void;
   /** @internal */
   readonly lifetimes: (state: S) => ReadonlyArray<ReadonlyArray<string>>;
   /** @internal */
@@ -51,29 +58,69 @@ export interface SchemaDefinition<
   readonly actions: Schema.TaggedUnion<C>;
 }
 
+/**
+ * Mutable state available only during a synchronous schema reducer. Objects,
+ * arrays, Map values, Set values, and Immer-enabled classes can be edited.
+ * Option values and Map keys stay deeply readonly; replace them instead.
+ * Draft references are revoked when the reducer returns, including on failure.
+ * @category models
+ * @since 0.1.0-beta.0
+ */
+export type Draft<S> = S extends (...args: never[]) => unknown
+  ? S
+  : S extends Option.Some<infer A>
+    ? Option.Some<Immutable<A>>
+    : S extends Option.None<infer A>
+      ? Option.None<Immutable<A>>
+      : S extends ReadonlyMap<infer K, infer V>
+        ? Map<Immutable<K>, Draft<V>>
+        : S extends ReadonlySet<infer V>
+          ? Set<Draft<V>>
+          : S extends object
+            ? { -readonly [K in keyof S]: Draft<S[K]> }
+            : S;
+
 type Cases<S, C extends Record<string, Schema.Constraint>> = {
   readonly [K in keyof C]: (
-    state: NoInfer<S>,
+    state: Draft<NoInfer<S>>,
     action: C[K]["Type"],
-  ) => Transition<NoInfer<S>, C[keyof C]["Type"], unknown>;
+    effect: FeatureEffect.Context<C>,
+  ) => FeatureEffect.ReducerEffect<C[keyof C]["Type"], unknown>;
 };
 
-type Requirements<T> = T extends { readonly effects?: ReadonlyArray<infer C> }
-  ? C extends Command.Run<infer _A, infer R>
-    ? R
-    : never
-  : never;
+type Reducer<S, C extends Record<string, Schema.Constraint>> = (
+  state: Draft<NoInfer<S>>,
+  action: C[keyof C]["Type"],
+  effect: FeatureEffect.Context<C>,
+) => FeatureEffect.ReducerEffect<C[keyof C]["Type"], unknown>;
+
+type Requirements<T> =
+  T extends FeatureEffect.Run<infer _A, infer R> ? Exclude<R, Scope.Scope> : never;
 
 /**
- * Defines synchronous state transitions. The typed two-call form accepts a reducer.
- * The schema form infers actions and requires one handler per action tag. Annotate
- * the initializer's return type to widen empty collections or optional state, and
- * its parameter when state needs caller input. Both forms infer command requirements.
+ * Defines synchronous state transitions. The schema form accepts an exhaustive
+ * handler map or one reducer function. Edit the draft and return `effect.none`,
+ * `effect.run`, `effect.replace`, or `effect.cancel` on every path. Async work sends
+ * actions; it cannot use the draft after the reducer returns.
+ *
+ * Schema state must have a draftable object root. Use plain objects, arrays,
+ * Map/Set, or Immer-enabled classes (including Schema.Class). Option is immutable:
+ * replace it as a whole. Snapshots are frozen; cycles, functions, and other object
+ * types are rejected. Plain objects need enumerable data fields; arrays and
+ * collections cannot have custom properties. Do not rely on mutations propagating
+ * across shared aliases.
+ * The typed two-call form instead accepts immutable transitions and arbitrary state.
+ * Annotate the initializer's return type to widen empty collections or optional
+ * state, and its parameter when state needs caller input. Requirements are inferred.
  * @example
  * ```ts
- * const Counter = Feature.make<{ readonly count: number }, "increment">()({
+ * const Counter = Feature.make({
+ *   actions: Schema.TaggedUnion({ Increment: {} }),
  *   initial: () => ({ count: 0 }),
- *   reduce: (state) => ({ state: { count: state.count + 1 } })
+ *   reduce: (state, _action, effect) => {
+ *     state.count++
+ *     return effect.none
+ *   }
  * })
  * ```
  * @category constructors
@@ -82,33 +129,50 @@ type Requirements<T> = T extends { readonly effects?: ReadonlyArray<infer C> }
 export function make<S, A>(): <R = never, I = void>(spec: {
   readonly initial: (input: I) => S;
   readonly reduce: (state: S, action: A) => Transition<S, A, R>;
-}) => Definition<S, A, R, I>;
+}) => Definition<S, A, Exclude<R, Scope.Scope>, I>;
 
 export function make<
   C extends Record<string, Schema.Constraint>,
-  S,
+  S extends object,
   P extends Cases<S, C>,
   I = void,
 >(spec: {
   readonly actions: Schema.TaggedUnion<C>;
   readonly initial: (input: I) => S;
-  readonly cases: P & { readonly [K in Exclude<keyof P, keyof C>]: never };
+  readonly reduce: P & { readonly [K in Exclude<keyof P, keyof C>]: never };
 }): SchemaDefinition<S, C, Requirements<ReturnType<P[keyof P]>>, I>;
 
-export function make<S, A, R, I>(spec?: {
-  readonly actions: unknown;
+export function make<
+  C extends Record<string, Schema.Constraint>,
+  S extends object,
+  P extends Reducer<S, C>,
+  I = void,
+>(spec: {
+  readonly actions: Schema.TaggedUnion<C>;
   readonly initial: (input: I) => S;
-  readonly cases: Readonly<Record<string, (state: S, action: A) => Transition<S, A, R>>>;
+  readonly reduce: P;
+}): SchemaDefinition<S, C, Requirements<ReturnType<P>>, I>;
+
+export function make<C extends Record<string, Schema.Constraint>, S extends object, I>(spec?: {
+  readonly actions: Schema.TaggedUnion<C>;
+  readonly initial: (input: I) => S;
+  readonly reduce: Cases<S, C> | Reducer<S, C>;
 }): unknown {
   if (spec === undefined) return makeDefinition;
 
+  const contexts = createEffectContexts(spec.actions);
+
   return {
     ...makeDefinition({
-      initial: spec.initial,
-      reduce: (state: S, action: A) =>
-        // The public schema overload requires the handler for every action tag.
-        spec.cases[(action as { readonly _tag: string })._tag](state, action),
+      initial: (input: I) => snapshot(spec.initial(input)),
+      reduce: (state: S, action: C[keyof C]["Type"]) => {
+        const tag = (action as { readonly _tag: keyof C })._tag;
+        const reduce = typeof spec.reduce === "function" ? spec.reduce : spec.reduce[tag];
+
+        return draftTransition(state, (draft) => reduce(draft, action, contexts[tag]));
+      },
     }),
+    prepare: snapshot<S>,
     actions: spec.actions,
   };
 }
@@ -181,7 +245,7 @@ export interface Focus<
 
 /**
  * Reusable required-child composition and store focus. Applying it preserves the
- * parent's initializer input and includes the child's command requirements.
+ * parent's initializer input and includes the child's effect requirements.
  * @category models
  * @since 0.1.0-beta.0
  */
@@ -227,19 +291,40 @@ export interface Child<S, A, CS, CA, CR> {
 }
 
 const rebase = <A, B, R>(
-  command: Command.Command<A, R>,
+  effect: FeatureEffect.FeatureEffect<A, R>,
   path: ReadonlyArray<string>,
   embed: (action: A) => B,
-): Command.Command<B, R> => ({
-  ...Command.map(command, embed),
-  path: [...path, ...command.path],
-});
+): Operation<B, R> => {
+  const operation = normalize(effect);
+  const rebasedPath = [...path, ...operation.path];
+
+  return operation._tag === "Cancel"
+    ? { ...operation, path: rebasedPath }
+    : {
+        ...operation,
+        path: rebasedPath,
+        run: (send) => operation.run((action) => send(embed(action))),
+      };
+};
 
 const register = <S, A, R, I>(self: Definition<S, A, R, I>, key: string): ReadonlyArray<string> => {
   if (self.routes.includes(key))
     throw StoreError.make({ reason: "Reducer", message: `Duplicate child route: ${key}` });
 
   return [...self.routes, key];
+};
+
+const prepareChildren = <S, CS>(
+  parent: ((state: S) => void) | undefined,
+  child: ((state: CS) => void) | undefined,
+  visit: (state: S, prepare: (state: CS) => void) => void,
+): ((state: S) => void) | undefined => {
+  if (child === undefined) return parent;
+
+  return (state) => {
+    parent?.(state);
+    visit(state, child);
+  };
 };
 
 /**
@@ -274,6 +359,9 @@ export function child<S, A, CS, CA, CR>(
       self: Definition<S, A, R, I> & Metadata,
     ): Definition<S, A, R | CR, I> & Metadata => ({
       ...self,
+      prepare: prepareChildren(self.prepare, options.feature.prepare, (current, prepare) =>
+        prepare(state.get(current)),
+      ),
       routes: register(self, action.key),
       lifetimes: (current) => [
         ...self.lifetimes(current),
@@ -290,7 +378,7 @@ export function child<S, A, CS, CA, CR>(
         return {
           state: parent.state,
           effects: [
-            ...(result.effects ?? []).map((command) => rebase(command, [action.key], action.embed)),
+            ...(result.effects ?? []).map((effect) => rebase(effect, [action.key], action.embed)),
             ...(parent.effects ?? []),
           ],
         };
@@ -321,7 +409,7 @@ export interface OptionalChild<S, A, CS, CA, CR> {
 
 /**
  * Composes an optional child. Removal or identity replacement cancels its work.
- * An external child action while absent throws StoreError; obsolete command actions
+ * An external child action while absent throws StoreError; obsolete effect actions
  * are discarded by the store before reaching the reducer. Reuse the descriptor
  * to scope a store to the same lifetime. The two-call form accepts checked names.
  * @category combinators
@@ -354,6 +442,11 @@ export function optionalChild<S, A, CS, CA, CR>(
       self: Definition<S, A, R, I> & Metadata,
     ): Definition<S, A, R | CR, I> & Metadata => ({
       ...self,
+      prepare: prepareChildren(self.prepare, options.feature.prepare, (current, prepare) => {
+        const selected = state.get(current);
+
+        if (Option.isSome(selected)) prepare(selected.value);
+      }),
       routes: register(self, action.key),
       lifetimes: (current) => {
         const selected = state.get(current);
@@ -386,8 +479,8 @@ export function optionalChild<S, A, CS, CA, CR>(
         return {
           state: parent.state,
           effects: [
-            ...(result.effects ?? []).map((command) =>
-              rebase(command, path(childState.value), action.embed),
+            ...(result.effects ?? []).map((effect) =>
+              rebase(effect, path(childState.value), action.embed),
             ),
             ...(parent.effects ?? []),
           ],
@@ -429,7 +522,7 @@ export interface ForEach<S, A, CS, CA, CR> {
 }
 
 /**
- * Composes a map of independent children. Removed IDs lose their command lifetime.
+ * Composes a map of independent children. Removed IDs lose their effect lifetime.
  * Map iteration order does not affect identity. Treat maps and entries as immutable.
  * Use the descriptor's `at(id)` to scope a store to one mounted entry. The two-call
  * form accepts checked state property and action tag names.
@@ -460,6 +553,9 @@ export function forEach<S, A, CS, CA, CR>(
       self: Definition<S, A, R, I> & Metadata,
     ): Definition<S, A, R | CR, I> & Metadata => ({
       ...self,
+      prepare: prepareChildren(self.prepare, options.feature.prepare, (current, prepare) => {
+        for (const entry of state.get(current).values()) prepare(entry);
+      }),
       routes: register(self, action.key),
       lifetimes: (current) => [
         ...self.lifetimes(current),
@@ -492,8 +588,8 @@ export function forEach<S, A, CS, CA, CR>(
         return {
           state: parent.state,
           effects: [
-            ...(result.effects ?? []).map((command) =>
-              rebase(command, [action.key, id], (child) => action.embed({ id, action: child })),
+            ...(result.effects ?? []).map((effect) =>
+              rebase(effect, [action.key, id], (child) => action.embed({ id, action: child })),
             ),
             ...(parent.effects ?? []),
           ],

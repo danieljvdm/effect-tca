@@ -1,11 +1,12 @@
 # Building a feature
 
-Define action cases and return the next immutable state from synchronous
-handlers. A feature definition can create many independent stores. Each store's
-scope owns its work and subscriptions.
+Define actions and edit a synchronous state draft in `reduce`. Every handler
+returns an effect, including `effect.none` when there is no work to start.
+A feature definition can create many independent stores. Each store's scope
+owns its work and subscriptions.
 
 ```ts
-import { Command, Feature, Store } from "@yielded/tca";
+import { Feature, Store } from "@yielded/tca";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
@@ -17,41 +18,61 @@ type Action = typeof Action.Type;
 const Timer = Feature.make({
   actions: Action,
   initial: (): State => ({ seconds: 0, running: false }),
-  cases: {
-    Start: (state) => ({
-      state: { ...state, running: true },
-      effects: [
-        Stream.tick("1 second").pipe(
-          Stream.drop(1),
-          Stream.map(() => Action.cases.Tick.make({})),
-          Command.latest("timer"),
-        ),
-      ],
-    }),
-    Stop: (state) => ({
-      state: { ...state, running: false },
-      effects: [Command.cancel("timer")],
-    }),
-    Tick: (state) => ({ state: { ...state, seconds: state.seconds + 1 } }),
+  reduce: {
+    Start: (state, _action, effect) => {
+      state.running = true;
+
+      return effect.replace(function* (send) {
+        yield* Stream.runForEach(Stream.tick("1 second").pipe(Stream.drop(1)), () => send.Tick());
+      });
+    },
+    Stop: (state, _action, effect) => {
+      state.running = false;
+
+      return effect.cancel("Start");
+    },
+    Tick: (state, _action, effect) => {
+      state.seconds += 1;
+
+      return effect.none;
+    },
   },
 });
 ```
 
-The action schema supplies payload types and requires a handler for every case.
-Annotate the initializer's return type when empty collections, optional values,
-or literals need a wider state type. For plain TypeScript actions or a custom
-reducer, use `Feature.make<State, Action>()({ initial, reduce })` instead.
+The action schema supplies handler payloads and the methods on `send`. Instead
+of a handler map, `reduce` can be a function `(state, action, effect)` with a
+switch on `action._tag`; both forms must return an effect on every path. Annotate
+the initializer's return type when empty collections or optional values need
+a wider state type.
 
-Return work in the `effects` array using the `Command` builders.
-`Command.run` starts independent work. `Command.latest` replaces work with the
-same key in that feature instance. For one response, pass an Effect returning
-an action; for multiple emissions, pass a Stream. Each emission waits for its
-state transition to commit. The timer drops `Stream.tick`'s immediate first
-emission to wait a full second. A callback receiving `send` is also available
-for custom workflows. Hot event sources still need bounded buffering.
-Use ordinary Effect services inside effects, including `Service.use`, and
-provide their Layers when creating a store. Convert expected failures into
-application actions with `Effect.match` or the Stream error operators.
+State edits commit before work starts. Drafts are revoked when reduction ends:
+capture needed values before returning `effect.run` or `effect.replace`, and
+send actions to update state asynchronously. `effect.none` still commits state
+edits. Reducer failures commit neither edits nor work.
+
+Drafts support plain objects, arrays, native Maps and Sets, and `Schema.Class`
+instances. Replace `Option` values as a whole; their contents remain read-only.
+Copy readonly arrays when assigning them to a draft,
+for example `state.results = [...results]`. See the [public contracts](PUBLIC_API.md)
+for the immutable reducer form and state limitations.
+
+`effect.run` starts independent work. `effect.replace` replaces previous work
+started by the same action tag, so another Start restarts this timer. Stop names
+the Start action to cancel it. Each mounted feature has independent lifetimes;
+cancelled work cannot commit already queued actions. Removing a feature ends
+all its work. The [search example](../examples/search/README.md) uses this for a
+detail timer that only stops when the detail disappears.
+
+Both constructors accept generators or callbacks returning an Effect. Each
+`send` waits for its state transition to commit. A callback may finish without
+sending an action. Use ordinary Effect services (`const api = yield* Api`),
+resource acquisition, retry, and error operators inside it; provide service
+Layers when creating the store. Convert expected failures into application
+actions. Invalid internal action construction is a defect.
+
+The timer drops `Stream.tick`'s immediate first emission to wait a full second.
+Hot event sources still need bounded buffering.
 
 ```ts
 const program = Effect.gen(function* () {
@@ -86,11 +107,11 @@ observe `closed` when hosting a store outside its normal UI lifetime.
 Declare a child once, then reuse it for reducer composition and store scoping:
 
 ```ts
-import * as Data from "effect/Data";
 import * as Optic from "effect/Optic";
 
 type ParentState = { readonly timer: State };
-type ParentAction = Data.TaggedEnum<{ Timer: { readonly action: Action } }>;
+const ParentAction = Schema.TaggedUnion({ Timer: { action: Action } });
+type ParentAction = typeof ParentAction.Type;
 const timerState = Optic.id<ParentState>().key("timer");
 
 const timerChild = Feature.child<ParentState, ParentAction>()({
@@ -99,9 +120,10 @@ const timerChild = Feature.child<ParentState, ParentAction>()({
   feature: Timer,
 });
 
-const Parent = Feature.make<ParentState, ParentAction>()({
+const Parent = Feature.make({
+  actions: ParentAction,
   initial: () => ({ timer: Timer.initial() }),
-  reduce: (state) => ({ state }),
+  reduce: { Timer: (_state, _action, effect) => effect.none },
 }).pipe(timerChild);
 ```
 
@@ -111,10 +133,9 @@ back through the same route. Tagged action names accept cases with exactly
 and a `Feature.Route` with `key`, `extract`, and `embed`. Route keys must be unique
 within a parent.
 
-Use a property name such as `state: "timer"` for a direct child. Optics also
-compose through deeper state. Inside a reducer,
-`timerState.key("seconds").modify((n) => n + 1)(state)` returns a new parent
-state without nested spreads; earlier snapshots remain unchanged.
+Use a property name such as `state: "timer"` for a direct child. Optics can
+focus composition into deeper state. Inside reducers, edit the draft directly;
+for example, `state.timer.seconds += 1` preserves earlier snapshots.
 
 `yield* Store.scope(parentStore, timerChild)` returns a store exposing only the
 timer's state and actions. It shares the parent's runtime and dependencies.
@@ -124,8 +145,8 @@ the child's work. Supply `identity` when replacing a present child should also
 end its old lifetime. Reopening after removal always creates a fresh lifetime.
 
 Use `Feature.forEach` for a `ReadonlyMap<string, ChildState>`. Its route carries
-`{ id, action }`; each map key identifies a separate child. Replace maps instead
-of mutating them. Removing a key cancels only that child's work. See the
+`{ id, action }`; each map key identifies a separate child. Edit the map through
+the parent's draft. Removing a key cancels only that child's work. See the
 [collection example](../examples/collection/README.md).
 
 Scoping an optional descriptor or a collection's `children.at(id)` returns an
@@ -174,8 +195,8 @@ The [search application](../examples/search/README.md) shows the complete setup.
 
 ## TestStore
 
-Supply the test runner's deep-equality assertion. TestStore holds command actions
-until you receive them, using the same reducer and command runtime as Store.
+Supply the test runner's deep-equality assertion. TestStore holds effect actions
+until you receive them, using the same reducer and effect runtime as Store.
 
 ```ts
 import assert from "node:assert/strict";
