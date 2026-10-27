@@ -6,7 +6,7 @@ A feature definition can create many independent stores. Each store's scope
 owns its work and subscriptions.
 
 ```ts
-import { Feature, Store } from "@yielded/tca";
+import { Feature, Store } from "effect-tca";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
@@ -159,7 +159,7 @@ subscriptions end. Scope the parent again to obtain the new child's handle.
 Create a binding once, outside render, using the application's Atom runtime:
 
 ```ts
-import { FeatureAtom } from "@yielded/tca/atom";
+import { FeatureAtom } from "effect-tca/atom";
 import * as Layer from "effect/Layer";
 import * as Atom from "effect/reactivity/Atom";
 
@@ -201,7 +201,7 @@ until you receive them, using the same reducer and effect runtime as Store.
 ```ts
 import assert from "node:assert/strict";
 
-import { TestStore } from "@yielded/tca";
+import { TestStore } from "effect-tca";
 import * as TestClock from "effect/testing/TestClock";
 
 const scenario = TestStore.scenario(Timer, { assertEquals: assert.deepStrictEqual }, (store) =>

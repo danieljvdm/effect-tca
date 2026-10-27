@@ -9,8 +9,8 @@
   },
   "dependencies": {
     "@effect/atom-react": "catalog:",
-    "@yielded/tca": "workspace:*",
     "effect": "catalog:",
+    "effect-tca": "workspace:*",
     "react": "catalog:",
     "react-dom": "catalog:"
   },

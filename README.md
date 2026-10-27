@@ -9,7 +9,7 @@ Features compose into larger features, and child lifetimes cancel their work whe
 The same child descriptors scope stores and Atom bindings for reusable views.
 
 ```ts
-import { Feature, Store } from "@yielded/tca";
+import { Feature, Store } from "effect-tca";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
@@ -32,7 +32,7 @@ const program = Effect.gen(function* () {
 }).pipe(Effect.scoped);
 ```
 
-Install with `bun add @yielded/tca effect`. Package manifests own compatibility.
+Install with `bun add effect-tca effect`. Package manifests own compatibility.
 The [search example](examples/search/README.md) is a complete React application
 with debounced search, child composition, and a reading timer that ends when its
 detail is dismissed. [The guide](docs/GUIDE.md) covers effects, composition,

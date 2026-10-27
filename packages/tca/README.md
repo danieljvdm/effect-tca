@@ -1,14 +1,14 @@
-# @yielded/tca
+# effect-tca
 
 Immutable feature reducers, scoped effects, typed child composition,
 and a TestStore for complete action and state assertions.
 
 ```sh
-bun add @yielded/tca effect
+bun add effect-tca effect
 ```
 
 ```ts
-import { Feature, Store } from "@yielded/tca";
+import { Feature, Store } from "effect-tca";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
@@ -32,7 +32,7 @@ const program = Effect.gen(function* () {
 ```
 
 Namespace exports are also available as direct imports such as
-`@yielded/tca/Feature`. Effect Atom bindings live in `@yielded/tca/atom`.
+`effect-tca/Feature`. Effect Atom bindings live in `effect-tca/atom`.
 Reuse child descriptors with `Store.scope` or `FeatureAtom.scope` to give each
 component only its own state and actions.
 

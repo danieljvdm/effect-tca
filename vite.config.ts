@@ -130,7 +130,7 @@ export default defineConfig({
                     "@alchemy.run/*",
                     "expo-*",
                     "@effect/platform-*",
-                    "@yielded/tca-*",
+                    "effect-tca-*",
                   ],
                   message: "Keep platform dependencies in adapters.",
                 },
@@ -148,6 +148,18 @@ export default defineConfig({
   run: {
     cache: { scripts: true },
     tasks: {
+      changeset: {
+        cache: false,
+        command: "changeset",
+      },
+      "changeset:pre": {
+        cache: false,
+        command: "changeset pre",
+      },
+      "changeset:version": {
+        cache: false,
+        command: "changeset version",
+      },
       "ci:format": {
         command: "vp fmt --check",
       },
@@ -155,6 +167,19 @@ export default defineConfig({
         // Recreate the tarballs and verify a clean install, including registry mode.
         cache: false,
         command: "node scripts/release-check.mjs",
+      },
+      "release:version": {
+        cache: false,
+        // PRs created with GITHUB_TOKEN do not trigger pull_request CI.
+        command: "vp run changeset:version && vp install && vp run ready",
+      },
+      "release:plan": {
+        cache: false,
+        command: "node scripts/release-publish.mjs --plan-only",
+      },
+      "release:publish": {
+        cache: false,
+        command: "node scripts/release-publish.mjs",
       },
     },
   },

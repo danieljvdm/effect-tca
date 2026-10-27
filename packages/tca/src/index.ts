@@ -1,6 +1,6 @@
 /**
  * Composable state and scoped effects.
- * @since 0.1.0-beta.0
+ * @since 0.0.1
  */
 export * as FeatureEffect from "./FeatureEffect.ts";
 export * as Feature from "./Feature.ts";

@@ -1,6 +1,6 @@
 /**
  * Registry-owned bindings to one scoped feature store.
- * @since 0.1.0-beta.0
+ * @since 0.0.1
  */
 import type * as Cause from "effect/Cause";
 import type * as Option from "effect/Option";
@@ -22,7 +22,7 @@ import type { StoreError } from "../StoreError.ts";
  * Read-only state and an action atom backed by the same store in each registry.
  * State starts Initial, then becomes Success; runtime failures become Failure.
  * @category models
- * @since 0.1.0-beta.0
+ * @since 0.0.1
  */
 export interface Binding<S, A, E = never> {
   readonly state: Atom.Atom<AsyncResult.AsyncResult<S, E | StoreError | Cause.NoSuchElementError>>;
@@ -36,7 +36,7 @@ export interface Binding<S, A, E = never> {
  * removal yields None, and replacement yields a new binding. These dynamic
  * bindings belong to their originating registry; another registry rejects them.
  * @category models
- * @since 0.1.0-beta.0
+ * @since 0.0.1
  */
 export type OptionalBinding<S, A, E = never> = Atom.Atom<
   AsyncResult.AsyncResult<
@@ -51,7 +51,7 @@ export type OptionalBinding<S, A, E = never> = Atom.Atom<
  * disposed immediately. Separate registries receive independent stores.
  * Dispatch is asynchronous. Use a local draft for React controlled text inputs.
  * @category constructors
- * @since 0.1.0-beta.0
+ * @since 0.0.1
  */
 export const bind = <S, A, R, E, I>(
   feature: Feature.Definition<S, A, NoInfer<R> | Scope.Scope, I>,
@@ -70,7 +70,7 @@ export const bind = <S, A, R, E, I>(
  * Define scopes outside render and reuse them. Child subscriptions retain the
  * parent store; failures remain visible through the existing Atom result channels.
  * @category combinators
- * @since 0.1.0-beta.0
+ * @since 0.0.1
  */
 export function scope<S, A, E, CS, CA>(
   binding: Binding<S, A, E>,

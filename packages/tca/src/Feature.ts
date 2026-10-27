@@ -1,6 +1,6 @@
 /**
  * Synchronous draft reducers, immutable feature definitions, and child composition.
- * @since 0.1.0-beta.0
+ * @since 0.0.1
  */
 import type * as Optic from "effect/Optic";
 import * as Option from "effect/Option";
@@ -19,7 +19,7 @@ import { StoreError } from "./StoreError.ts";
 /**
  * One atomic state transition and work to start after it commits.
  * @category models
- * @since 0.1.0-beta.0
+ * @since 0.0.1
  */
 export interface Transition<S, A, R = never> {
   readonly state: S;
@@ -29,7 +29,7 @@ export interface Transition<S, A, R = never> {
 /**
  * A reusable feature description. State and earlier snapshots must remain immutable.
  * @category models
- * @since 0.1.0-beta.0
+ * @since 0.0.1
  */
 export interface Definition<S, A, R = never, I = void> extends Pipeable {
   /** Constructs fresh state. Features with required input cannot initialize without it. */
@@ -47,7 +47,7 @@ export interface Definition<S, A, R = never, I = void> extends Pipeable {
  * A feature whose action schema remains available for constructors and bound senders.
  * Declaring a schema does not validate ordinary store dispatches.
  * @category models
- * @since 0.1.0-beta.0
+ * @since 0.0.1
  */
 export interface SchemaDefinition<
   S,
@@ -64,7 +64,7 @@ export interface SchemaDefinition<
  * Option values and Map keys stay deeply readonly; replace them instead.
  * Draft references are revoked when the reducer returns, including on failure.
  * @category models
- * @since 0.1.0-beta.0
+ * @since 0.0.1
  */
 export type Draft<S> = S extends (...args: never[]) => unknown
   ? S
@@ -124,7 +124,7 @@ type Requirements<T> =
  * })
  * ```
  * @category constructors
- * @since 0.1.0-beta.0
+ * @since 0.0.1
  */
 export function make<S, A>(): <R = never, I = void>(spec: {
   readonly initial: (input: I) => S;
@@ -180,7 +180,7 @@ export function make<C extends Record<string, Schema.Constraint>, S extends obje
 /**
  * An action route and its stable, parent-local lifetime namespace.
  * @category models
- * @since 0.1.0-beta.0
+ * @since 0.0.1
  */
 export interface Route<A, B> {
   readonly key: string;
@@ -202,7 +202,7 @@ type Tags<A extends Tagged> = {
  * Routes a tagged case whose only fields are `_tag` and `action`.
  * For other shapes, supply a Route with explicit extract and embed functions.
  * @category constructors
- * @since 0.1.0-beta.0
+ * @since 0.0.1
  */
 export const tag =
   <A extends Tagged>() =>
@@ -228,7 +228,7 @@ type ActionTag<A, CA> = [A] extends [Tagged]
  * Paths are relative to the parent and identify the mounted child lifetime.
  * Use child descriptors or a collection descriptor's `at` instead of constructing one.
  * @category models
- * @since 0.1.0-beta.0
+ * @since 0.0.1
  */
 export interface Focus<
   S,
@@ -247,7 +247,7 @@ export interface Focus<
  * Reusable required-child composition and store focus. Applying it preserves the
  * parent's initializer input and includes the child's effect requirements.
  * @category models
- * @since 0.1.0-beta.0
+ * @since 0.0.1
  */
 export interface ChildDescriptor<S, A, CS, CA, CR>
   extends Focus<S, A, CS, CA, "Child">, Composition<S, A, CR> {}
@@ -256,7 +256,7 @@ export interface ChildDescriptor<S, A, CS, CA, CR>
  * Reusable optional-child composition and store focus. Its identity policy is
  * shared by reducer cancellation and scoped store handles.
  * @category models
- * @since 0.1.0-beta.0
+ * @since 0.0.1
  */
 export interface OptionalChildDescriptor<S, A, CS, CA, CR>
   extends Focus<S, A, CS, CA, "OptionalChild">, Composition<S, A, CR> {}
@@ -265,7 +265,7 @@ export interface OptionalChildDescriptor<S, A, CS, CA, CR>
  * Reusable collection composition. `at(id)` focuses one optional keyed child;
  * removing and re-adding its ID creates a new lifetime.
  * @category models
- * @since 0.1.0-beta.0
+ * @since 0.0.1
  */
 export interface ForEachDescriptor<S, A, CS, CA, CR> extends Composition<S, A, CR> {
   readonly _tag: "ForEach";
@@ -281,7 +281,7 @@ interface Composition<S, A, CR> {
 /**
  * One child's state focus, action route, and reusable definition.
  * @category models
- * @since 0.1.0-beta.0
+ * @since 0.0.1
  */
 export interface Child<S, A, CS, CA, CR> {
   readonly state: Optic.Lens<S, CS> | StateKey<S, NoInfer<CS>>;
@@ -333,7 +333,7 @@ const prepareChildren = <S, CS>(
  * accepts checked state property and action tag names. Duplicate route keys throw
  * StoreError during composition.
  * @category combinators
- * @since 0.1.0-beta.0
+ * @since 0.0.1
  */
 export function child<S, A>(): <CS, CA, CR>(
   options: Child<S, A, CS, CA, CR>,
@@ -397,7 +397,7 @@ export function child<S, A, CS, CA, CR>(
  * Optional state with an explicit action route. `identity` defaults to one identity
  * per presentation; supply it when replacing a present child must end its old work.
  * @category models
- * @since 0.1.0-beta.0
+ * @since 0.0.1
  */
 export interface OptionalChild<S, A, CS, CA, CR> {
   readonly state: Optic.Lens<S, Option.Option<CS>> | StateKey<S, Option.Option<NoInfer<CS>>>;
@@ -413,7 +413,7 @@ export interface OptionalChild<S, A, CS, CA, CR> {
  * are discarded by the store before reaching the reducer. Reuse the descriptor
  * to scope a store to the same lifetime. The two-call form accepts checked names.
  * @category combinators
- * @since 0.1.0-beta.0
+ * @since 0.0.1
  */
 export function optionalChild<S, A>(): <CS, CA, CR>(
   options: OptionalChild<S, A, CS, CA, CR>,
@@ -500,7 +500,7 @@ export function optionalChild<S, A, CS, CA, CR>(
 /**
  * A child action addressed by a stable string ID.
  * @category models
- * @since 0.1.0-beta.0
+ * @since 0.0.1
  */
 export interface Identified<A> {
   readonly id: string;
@@ -511,7 +511,7 @@ export interface Identified<A> {
  * A collection state focus, identified action route, and child definition.
  * Composition uses existing entries rather than invoking the child's initializer.
  * @category models
- * @since 0.1.0-beta.0
+ * @since 0.0.1
  */
 export interface ForEach<S, A, CS, CA, CR> {
   readonly state:
@@ -527,7 +527,7 @@ export interface ForEach<S, A, CS, CA, CR> {
  * Use the descriptor's `at(id)` to scope a store to one mounted entry. The two-call
  * form accepts checked state property and action tag names.
  * @category combinators
- * @since 0.1.0-beta.0
+ * @since 0.0.1
  */
 export function forEach<S, A>(): <CS, CA, CR>(
   options: ForEach<S, A, CS, CA, CR>,

@@ -15,10 +15,7 @@
     "check": "vp check && vp run typecheck",
     "test": "vp run -r --concurrency-limit 4 test",
     "build": "vp run -r build",
-    "ready": "vp run build && vp run check && vp run test && vp run release:check",
-    "changeset": "changeset",
-    "changeset:pre": "changeset pre",
-    "changeset:version": "changeset version"
+    "ready": "vp run build && vp run check && vp run test && vp run release:check"
   },
   "devDependencies": {
     "@changesets/cli": "3.0.3",

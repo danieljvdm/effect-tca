@@ -3,7 +3,7 @@
   "changelog": "@changesets/cli/changelog",
   "commit": false,
   "format": "oxfmt",
-  "fixed": [["@yielded/tca"]],
+  "fixed": [["effect-tca"]],
   "linked": [],
   "access": "public",
   "baseBranch": "main",

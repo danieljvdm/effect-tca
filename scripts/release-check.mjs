@@ -10,7 +10,7 @@ const vp = join(root, "node_modules/.bin/vp");
 const releaseDir = join(root, ".release");
 const fromRegistry = process.argv.includes("--registry");
 
-const packages = [["tca", "@yielded/tca"]];
+const packages = [["tca", "effect-tca"]];
 
 const run = (command, args, cwd = root) => execFileSync(command, args, { cwd, stdio: "inherit" });
 
@@ -34,7 +34,7 @@ for (const [directory, name] of packages) {
     await readFile(join(root, "packages", directory, "package.json"), "utf8"),
   );
 
-  assert.equal(manifest.version, version, `${name} must share the beta version`);
+  assert.equal(manifest.version, version, `${name} must share the release version`);
 
   if (fromRegistry) continue;
   run(vp, ["-C", join(root, "packages", directory), "pm", "pack", "--out", archive]);
@@ -122,11 +122,11 @@ try {
   await writeFile(
     join(consumer, "src/index.ts"),
     [
-      'export { Feature, FeatureEffect, Store, TestStore, StoreError } from "@yielded/tca";',
-      'export * as DirectFeature from "@yielded/tca/Feature";',
-      'export * as DirectFeatureEffect from "@yielded/tca/FeatureEffect";',
-      'export { FeatureAtom } from "@yielded/tca/atom";',
-      'export * as DirectAtom from "@yielded/tca/atom/FeatureAtom";',
+      'export { Feature, FeatureEffect, Store, TestStore, StoreError } from "effect-tca";',
+      'export * as DirectFeature from "effect-tca/Feature";',
+      'export * as DirectFeatureEffect from "effect-tca/FeatureEffect";',
+      'export { FeatureAtom } from "effect-tca/atom";',
+      'export * as DirectAtom from "effect-tca/atom/FeatureAtom";',
       "",
     ].join("\n"),
   );
