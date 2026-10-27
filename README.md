@@ -9,98 +9,156 @@ draft, then return an effect. Async work sends actions back through the reducer.
 bun add effect-tca effect
 ```
 
-This focus timer starts once, even if `Started` arrives repeatedly. Pausing stops
-the ticking; starting again resumes from the same elapsed time.
+An editor keeps its draft and save/cancel transitions in a feature. Effect Atom
+owns the saved document, query status, and cache invalidation. The draft is an
+intentional snapshot: a background refresh must not overwrite someone's edits.
+
+Assume `./data` exports a `DocumentWriter` Effect service contract with
+`save({ id, body })`, a `documentAtom(id)` query, and a `saveDocument` mutation.
+The mutation updates the document and invalidates its query on success.
 
 ```ts
 import { Feature } from "effect-tca";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
-const Focus = Feature.make({
-  actions: Schema.TaggedUnion({ Started: {}, Paused: {}, Tick: {} }),
-  initial: () => ({ seconds: 0, running: false }),
-  reduce: {
-    Started: (state, _action, effect) => {
-      if (state.running) return effect.none;
-      state.running = true;
+import { DocumentWriter } from "./data";
 
-      return effect.replace(function* (send) {
-        while (true) {
-          yield* Effect.sleep("1 second");
-          yield* send.Tick();
-        }
+const Editor = Feature.make({
+  actions: Schema.TaggedUnion({
+    Opened: { id: Schema.String, body: Schema.String },
+    BodyChanged: { body: Schema.String },
+    SaveClicked: {},
+    Saved: {},
+    SaveFailed: {},
+    CancelClicked: {},
+  }),
+  initial: () => ({ id: "", draft: "", editing: false, saving: false, error: "" }),
+  reduce: {
+    Opened: (state, { id, body }, effect) => {
+      if (state.editing) return effect.none;
+      state.id = id;
+      state.draft = body;
+      state.editing = true;
+      state.error = "";
+      return effect.none;
+    },
+    BodyChanged: (state, { body }, effect) => {
+      if (state.editing && !state.saving) state.draft = body;
+      return effect.none;
+    },
+    SaveClicked: (state, _action, effect) => {
+      // Repeated clicks cannot start a second save.
+      if (!state.editing || state.saving) return effect.none;
+      state.saving = true;
+      state.error = "";
+      const document = { id: state.id, body: state.draft };
+
+      // Capture values now; async work never holds the mutable state draft.
+      return effect.run(function* (send) {
+        const writer = yield* DocumentWriter;
+        yield* writer.save(document).pipe(
+          Effect.matchEffect({
+            onSuccess: () => send.Saved(),
+            onFailure: () => send.SaveFailed(),
+          }),
+        );
       });
     },
-    Paused: (state, _action, effect) => {
-      state.running = false;
-
-      return effect.cancel("Started");
+    Saved: (state, _action, effect) => {
+      state.saving = false;
+      state.editing = false;
+      state.draft = "";
+      return effect.none;
     },
-    Tick: (state, _action, effect) => {
-      state.seconds += 1;
-
+    SaveFailed: (state, _action, effect) => {
+      state.saving = false;
+      state.error = "Couldn't save. Your draft is still here.";
+      return effect.none;
+    },
+    CancelClicked: (state, _action, effect) => {
+      if (state.saving) return effect.none;
+      state.editing = false;
+      state.draft = "";
+      state.error = "";
       return effect.none;
     },
   },
 });
 ```
 
-Starting is idempotent because the reducer commits `running = true` before the
-effect starts. Further `Started` actions return `effect.none`. `effect.replace`
-owns the timer under the `Started` action, so `Paused` can cancel it by name.
-Only `Tick` edits the elapsed time; the async loop never holds a state draft.
-
-For React, add `@effect/atom-react`, `react`, and `react-dom` with `bun add`.
-Create the binding once, outside render:
+The application connects the feature's dependency to its existing Atom mutation.
+`get.setResult` runs that mutation and awaits its result in the same registry.
+The feature receives a completion action; the query remains the source of saved
+content. The binding and mutation below serve one editor; give concurrent
+editors separate mutation atoms.
 
 ```tsx
-import { RegistryProvider, useAtomSet, useAtomSuspense } from "@effect/atom-react";
+import { useAtomSet, useAtomSuspense } from "@effect/atom-react";
 import { FeatureAtom } from "effect-tca/atom";
 import * as Layer from "effect/Layer";
 import * as Atom from "effect/reactivity/Atom";
-import { Suspense } from "react";
 
-const timer = FeatureAtom.bind(Focus, {
-  runtime: Atom.runtime(Layer.empty),
+import { documentAtom, saveDocument } from "./data";
+
+const editor = FeatureAtom.bind(Editor, {
+  runtime: Atom.runtime((get) =>
+    Layer.succeed(DocumentWriter, {
+      // The existing mutation owns the write and query invalidation.
+      save: (document) => Effect.suspend(() => get.setResult(saveDocument, document)),
+    }),
+  ),
 });
 
-function FocusTimer() {
-  const result = useAtomSuspense(timer.state, { includeFailure: true });
-  const send = useAtomSet(timer.send);
+export function DocumentEditor() {
+  const document = useAtomSuspense(documentAtom("welcome")).value;
+  const state = useAtomSuspense(editor.state).value;
+  const send = useAtomSet(editor.send);
 
-  if (result._tag === "Failure") {
-    return <p role="alert">The timer stopped unexpectedly.</p>;
+  if (!state.editing) {
+    return (
+      <article>
+        <p>{document.body}</p>
+        <button onClick={() => send({ _tag: "Opened", id: document.id, body: document.body })}>
+          Edit
+        </button>
+      </article>
+    );
   }
 
-  const { seconds, running } = result.value;
-
   return (
-    <section>
-      <h1>Time to focus</h1>
-      <output>{seconds}s focused</output>
-      <button onClick={() => send({ _tag: running ? "Paused" : "Started" })}>
-        {running ? "Pause" : "Start focusing"}
+    <form
+      onSubmit={(event) => {
+        event.preventDefault();
+        send({ _tag: "SaveClicked" });
+      }}
+    >
+      {/* The browser keeps typing immediate while draft actions are queued. */}
+      <textarea
+        defaultValue={state.draft}
+        aria-label="Document body"
+        disabled={state.saving}
+        onChange={(event) => send({ _tag: "BodyChanged", body: event.currentTarget.value })}
+      />
+      {state.error && <p role="alert">{state.error}</p>}
+      <button disabled={state.saving}>{state.saving ? "Saving…" : "Save"}</button>
+      <button type="button" disabled={state.saving} onClick={() => send({ _tag: "CancelClicked" })}>
+        Cancel
       </button>
-    </section>
-  );
-}
-
-export function App() {
-  return (
-    <RegistryProvider>
-      <Suspense fallback={<p>Opening timer…</p>}>
-        <FocusTimer />
-      </Suspense>
-    </RegistryProvider>
+    </form>
   );
 }
 ```
 
-The Atom binding gives each registry its own store. React reads state and sends
-actions; releasing the last consumer disposes the store and cancels the timer.
-The same lifetime rules apply to composed child features: removing a child ends
-its work, and its queued actions cannot update a replacement.
+For React, add `@effect/atom-react`, `react`, and `react-dom` with `bun add`.
+Render inside `RegistryProvider`, `Suspense`, and an error boundary. Create
+bindings and query/mutation atoms outside render; share the query and mutation's
+Atom runtime factory so invalidation reaches the same data.
+
+Releasing the last feature consumer disposes its store and stops its effects.
+That releases the feature's wait for a mutation; it does not guarantee that a
+server write is undone. Cancel here discards an unsaved draft and is disabled
+during saving. Shared query lifetimes remain under Atom's control.
 
 The [guide](docs/GUIDE.md) covers composition, scoped stores, and TestStore.
 The [search example](examples/search/README.md) shows a complete React app with
