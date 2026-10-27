@@ -9,151 +9,156 @@ draft, then return an effect. Async work sends actions back through the reducer.
 bun add effect-tca effect
 ```
 
-Search repositories as you type. Each new query replaces the previous search.
-Assume `./api` exports a `Repository` schema and a `SearchApi` service whose
-read-only `search(query)` effect handles HTTP, decoding, and interruption.
-Its errors expose `retryable` to distinguish transient failures.
+An editor keeps its draft and save/cancel transitions in a feature. Effect Atom
+owns the saved document, query status, and cache invalidation. The draft is an
+intentional snapshot: a background refresh must not overwrite someone's edits.
+
+Assume `./data` exports a `DocumentWriter` Effect service contract with
+`save({ id, body })`, a `documentAtom(id)` query, and a `saveDocument` mutation.
+The mutation updates the document and invalidates its query on success.
 
 ```ts
 import { Feature } from "effect-tca";
 import * as Effect from "effect/Effect";
-import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
 
-import { Repository, SearchApi } from "./api";
+import { DocumentWriter } from "./data";
 
-const Repositories = Schema.Array(Repository);
-
-const Search = Feature.make({
+const Editor = Feature.make({
   actions: Schema.TaggedUnion({
-    QueryChanged: { query: Schema.String },
-    ResultsLoaded: { results: Repositories },
-    SearchFailed: {},
+    Opened: { id: Schema.String, body: Schema.String },
+    BodyChanged: { body: Schema.String },
+    SaveClicked: {},
+    Saved: {},
+    SaveFailed: {},
+    CancelClicked: {},
   }),
-  initial: () => ({
-    query: "",
-    results: Repositories.make([]),
-    loading: false,
-    error: "",
-  }),
+  initial: () => ({ id: "", draft: "", editing: false, saving: false, error: "" }),
   reduce: {
-    QueryChanged: (state, { query }, effect) => {
-      const term = query.trim();
-      // Repeated queries leave the current search alone.
-      if (term === state.query) return effect.none;
-      state.query = term;
-      state.results = [];
+    Opened: (state, { id, body }, effect) => {
+      if (state.editing) return effect.none;
+      state.id = id;
+      state.draft = body;
+      state.editing = true;
       state.error = "";
-      state.loading = term.length > 0;
+      return effect.none;
+    },
+    BodyChanged: (state, { body }, effect) => {
+      if (state.editing && !state.saving) state.draft = body;
+      return effect.none;
+    },
+    SaveClicked: (state, _action, effect) => {
+      // Repeated clicks cannot start a second save.
+      if (!state.editing || state.saving) return effect.none;
+      state.saving = true;
+      state.error = "";
+      const document = { id: state.id, body: state.draft };
 
-      // After committing state, cancel the previous QueryChanged scope
-      // (its delay, request, and retries) and create a new one.
-      return effect.replace(function* (send) {
-        // Clearing the input cancels old work without making another request.
-        if (term === "") return;
-
-        const api = yield* SearchApi;
-        yield* api.search(term).pipe(
-          // Retry transient failures up to twice using a native Effect schedule.
-          Effect.retry({
-            schedule: Schedule.exponential("200 millis"),
-            times: 2,
-            while: (error) => error.retryable,
-          }),
-          // Debounce: replacing this scope cancels the wait and any running work.
-          Effect.delay("300 millis"),
-          // Async work sends actions; only the reducer edits state.
+      // Capture values now; async work never holds the mutable state draft.
+      return effect.run(function* (send) {
+        const writer = yield* DocumentWriter;
+        yield* writer.save(document).pipe(
           Effect.matchEffect({
-            onSuccess: (results) => send.ResultsLoaded({ results }),
-            onFailure: () => send.SearchFailed(),
+            onSuccess: () => send.Saved(),
+            onFailure: () => send.SaveFailed(),
           }),
         );
       });
     },
-    ResultsLoaded: (state, { results }, effect) => {
-      state.results = [...results];
-      state.loading = false;
+    Saved: (state, _action, effect) => {
+      state.saving = false;
+      state.editing = false;
+      state.draft = "";
       return effect.none;
     },
-    SearchFailed: (state, _action, effect) => {
-      state.loading = false;
-      state.error = "Search failed. Try a different query.";
+    SaveFailed: (state, _action, effect) => {
+      state.saving = false;
+      state.error = "Couldn't save. Your draft is still here.";
+      return effect.none;
+    },
+    CancelClicked: (state, _action, effect) => {
+      if (state.saving) return effect.none;
+      state.editing = false;
+      state.draft = "";
+      state.error = "";
       return effect.none;
     },
   },
 });
 ```
 
-`effect.replace` uses the current action tag as its key, local to this feature
-instance. A replaced search cannot send stale results into the new one.
-`Effect.delay` supplies the debounce window; `Schedule` controls retries. Both
-share the search's scope, and interruption does not send `SearchFailed`.
-
-For React, add `@effect/atom-react`, `react`, and `react-dom` with `bun add`.
-Create the binding once, outside render:
+The application connects the feature's dependency to its existing Atom mutation.
+`get.setResult` runs that mutation and awaits its result in the same registry.
+The feature receives a completion action; the query remains the source of saved
+content. The binding and mutation below serve one editor; give concurrent
+editors separate mutation atoms.
 
 ```tsx
-import { RegistryProvider, useAtomSet, useAtomSuspense } from "@effect/atom-react";
+import { useAtomSet, useAtomSuspense } from "@effect/atom-react";
 import { FeatureAtom } from "effect-tca/atom";
+import * as Layer from "effect/Layer";
 import * as Atom from "effect/reactivity/Atom";
-import { Suspense, useState } from "react";
 
-const search = FeatureAtom.bind(Search, {
-  runtime: Atom.runtime(SearchApi.layer),
+import { documentAtom, saveDocument } from "./data";
+
+const editor = FeatureAtom.bind(Editor, {
+  runtime: Atom.runtime((get) =>
+    Layer.succeed(DocumentWriter, {
+      // The existing mutation owns the write and query invalidation.
+      save: (document) => Effect.suspend(() => get.setResult(saveDocument, document)),
+    }),
+  ),
 });
 
-function RepositorySearch() {
-  const result = useAtomSuspense(search.state, { includeFailure: true });
-  const send = useAtomSet(search.send);
-  // Keep typing immediate while actions flow through the store asynchronously.
-  const [input, setInput] = useState("");
+export function DocumentEditor() {
+  const document = useAtomSuspense(documentAtom("welcome")).value;
+  const state = useAtomSuspense(editor.state).value;
+  const send = useAtomSet(editor.send);
 
-  if (result._tag === "Failure") {
-    return <p role="alert">The search stopped unexpectedly.</p>;
+  if (!state.editing) {
+    return (
+      <article>
+        <p>{document.body}</p>
+        <button onClick={() => send({ _tag: "Opened", id: document.id, body: document.body })}>
+          Edit
+        </button>
+      </article>
+    );
   }
 
-  const state = result.value;
-
   return (
-    <section>
-      <h1>Find a repository</h1>
-      <input
-        aria-label="Search GitHub repositories"
-        placeholder="effect-tca"
-        value={input}
-        onChange={(event) => {
-          const query = event.currentTarget.value;
-          setInput(query);
-          send({ _tag: "QueryChanged", query });
-        }}
+    <form
+      onSubmit={(event) => {
+        event.preventDefault();
+        send({ _tag: "SaveClicked" });
+      }}
+    >
+      {/* The browser keeps typing immediate while draft actions are queued. */}
+      <textarea
+        defaultValue={state.draft}
+        aria-label="Document body"
+        disabled={state.saving}
+        onChange={(event) => send({ _tag: "BodyChanged", body: event.currentTarget.value })}
       />
-      {state.loading && <p role="status">Searching…</p>}
       {state.error && <p role="alert">{state.error}</p>}
-      <ul>
-        {state.results.map((repo) => (
-          <li key={repo.id}>
-            <a href={repo.html_url}>{repo.full_name}</a>
-          </li>
-        ))}
-      </ul>
-    </section>
-  );
-}
-
-export function App() {
-  return (
-    <RegistryProvider>
-      <Suspense fallback={<p>Opening search…</p>}>
-        <RepositorySearch />
-      </Suspense>
-    </RegistryProvider>
+      <button disabled={state.saving}>{state.saving ? "Saving…" : "Save"}</button>
+      <button type="button" disabled={state.saving} onClick={() => send({ _tag: "CancelClicked" })}>
+        Cancel
+      </button>
+    </form>
   );
 }
 ```
 
-The Atom binding gives each registry its own store. Releasing the last consumer
-disposes the store and cancels its work. Removing a composed child feature does
-the same for that child, without affecting other instances.
+For React, add `@effect/atom-react`, `react`, and `react-dom` with `bun add`.
+Render inside `RegistryProvider`, `Suspense`, and an error boundary. Create
+bindings and query/mutation atoms outside render; share the query and mutation's
+Atom runtime factory so invalidation reaches the same data.
+
+Releasing the last feature consumer disposes its store and stops its effects.
+That releases the feature's wait for a mutation; it does not guarantee that a
+server write is undone. Cancel here discards an unsaved draft and is disabled
+during saving. Shared query lifetimes remain under Atom's control.
 
 The [guide](docs/GUIDE.md) covers composition, scoped stores, and TestStore.
 The [search example](examples/search/README.md) shows a complete React app with
