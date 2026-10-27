@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "selector": "dev-kit",
+  "name": "dev-kit",
+  "baseDigest": "sha256:4535489cd23d14545eb487abf22bd068f0aa2ece4784af059da3fabd88ad48ca",
+  "source": {
+    "type": "bundled",
+    "version": "2.1.2"
+  }
+}

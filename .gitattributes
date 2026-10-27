@@ -1,0 +1,3 @@
+* text=auto eol=lf
+bun.lock linguist-generated=true
+.agents/skills/** linguist-vendored=true

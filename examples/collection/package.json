@@ -1,0 +1,19 @@
+{
+  "name": "tca-collection-example",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "bun src/main.ts",
+    "build": "vp pack",
+    "typecheck": "effect-tsrs diagnostics --project tsconfig.json --type-check --strict"
+  },
+  "dependencies": {
+    "@yielded/tca": "workspace:*",
+    "effect": "catalog:"
+  },
+  "devDependencies": {
+    "typescript": "catalog:",
+    "vite": "catalog:",
+    "vite-plus": "catalog:"
+  }
+}

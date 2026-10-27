@@ -1,0 +1,17 @@
+{
+  "$schema": "https://unpkg.com/@changesets/config@4.0.1/schema.json",
+  "changelog": "@changesets/cli/changelog",
+  "commit": false,
+  "format": "oxfmt",
+  "fixed": [["@yielded/tca"]],
+  "linked": [],
+  "access": "public",
+  "baseBranch": "main",
+  "privatePackages": {
+    "version": false,
+    "tag": false
+  },
+  "updateInternalDependencies": "patch",
+  "bumpVersionsWithWorkspaceProtocolOnly": true,
+  "ignore": []
+}

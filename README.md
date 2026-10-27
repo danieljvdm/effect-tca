@@ -1,0 +1,46 @@
+# Yielded TCA
+
+Composable state and scoped effects for TypeScript, built on Effect.
+
+A feature owns immutable state, actions, and a synchronous reducer. Its commands
+run as Effect programs and send actions back to the store. Features compose into
+larger features, and child lifetimes cancel their work when they disappear.
+
+```ts
+import { Feature, Store } from "@yielded/tca";
+import * as Effect from "effect/Effect";
+
+const Counter = Feature.make<{ readonly count: number }, "increment">()({
+  initial: () => ({ count: 0 }),
+  reduce: (state) => ({ state: { count: state.count + 1 } }),
+});
+
+const program = Effect.gen(function* () {
+  const store = yield* Store.make(Counter);
+  yield* store.send("increment");
+  return yield* store.get;
+}).pipe(Effect.scoped);
+```
+
+Install with `bun add @yielded/tca effect`. Package manifests own compatibility.
+The [search example](examples/search/README.md) is a complete React application
+with debounced search, child composition, and a reading timer that ends when its
+detail is dismissed. [The guide](docs/GUIDE.md) covers commands, composition,
+Atom bindings, and TestStore.
+
+## Development
+
+```sh
+vp install
+vp run build
+vp run --filter tca-search-example dev
+vp run ready
+```
+
+Library code lives in `packages/tca`; applications live in `examples`.
+The [toolchain guide](docs/TOOLCHAIN.md) describes commands and repository rules.
+The [public contracts](docs/PUBLIC_API.md) describe ownership and limitations.
+
+Inspired by Point-Free's [Composable Architecture](https://github.com/pointfreeco/swift-composable-architecture).
+Repository tooling and pinned contributor skills follow
+[`yielded-dev/sync`](https://github.com/yielded-dev/sync/tree/cfae88bdd717e5c82b82ddf0592e1337816eabb8).
