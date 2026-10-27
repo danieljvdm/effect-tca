@@ -1,6 +1,6 @@
-import type { OxfmtConfig } from "oxfmt";
-import type { OxlintConfig } from "oxlint";
 import { defineConfig } from "vite-plus";
+import type { OxfmtConfig } from "vite-plus/fmt";
+import type { OxlintConfig } from "vite-plus/lint";
 
 // Tool-owned paths that should not be linted or formatted. Skill copies remain
 // tracked project inputs, while symlinked harness targets and generated Git
