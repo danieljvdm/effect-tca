@@ -2,7 +2,7 @@
  * Effect programs owned by a feature instance.
  * @since 0.1.0-beta.0
  */
-import type * as Effect from "effect/Effect";
+import * as Effect from "effect/Effect";
 
 /**
  * A cancellation key, local to one mounted feature instance.
@@ -53,31 +53,41 @@ export interface Cancel {
 
 /**
  * Runs work concurrently with other commands. The feature lifetime owns it.
+ * An Effect emits its successful result as one action and waits for its commit.
+ * Use a send callback for multiple actions. Handle expected failures in either form.
  * @category constructors
  * @since 0.1.0-beta.0
  */
-export const run = <A, R>(
-  program: (send: Send<A>) => Effect.Effect<void, never, R>,
+export const run: {
+  <A, R>(program: Effect.Effect<A, never, R>): Command<A, R>;
+  <A, R>(program: (send: Send<A>) => Effect.Effect<void, never, R>): Command<A, R>;
+} = <A, R>(
+  program: Effect.Effect<A, never, R> | ((send: Send<A>) => Effect.Effect<void, never, R>),
 ): Command<A, R> => ({
   _tag: "Run",
   key: undefined,
-  run: program,
+  run: Effect.isEffect(program) ? (send) => Effect.flatMap(program, send) : program,
   path: [],
 });
 
 /**
  * Replaces work with the same key, fencing even its already queued emissions.
  * Keys are scoped to the feature instance, so siblings never cancel each other.
+ * Accepts an action-returning Effect or a callback that can send multiple actions.
+ * Both forms wait for emitted actions to commit and require expected errors handled.
  * @category constructors
  * @since 0.1.0-beta.0
  */
-export const latest = <A, R>(
+export const latest: {
+  <A, R>(key: Key, program: Effect.Effect<A, never, R>): Command<A, R>;
+  <A, R>(key: Key, program: (send: Send<A>) => Effect.Effect<void, never, R>): Command<A, R>;
+} = <A, R>(
   key: Key,
-  program: (send: Send<A>) => Effect.Effect<void, never, R>,
+  program: Effect.Effect<A, never, R> | ((send: Send<A>) => Effect.Effect<void, never, R>),
 ): Command<A, R> => ({
   _tag: "Run",
   key,
-  run: program,
+  run: Effect.isEffect(program) ? (send) => Effect.flatMap(program, send) : program,
   path: [],
 });
 

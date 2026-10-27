@@ -3,7 +3,6 @@ import * as Context from "effect/Context";
 import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import * as Optic from "effect/Optic";
 import * as Option from "effect/Option";
 
 export interface Note {
@@ -92,13 +91,14 @@ export const Search = Feature.make<SearchState, SearchAction>()({
       QueryChanged: ({ query }) => ({
         state: { ...state, query, loading: true },
         commands: [
-          Command.latest("search", (send: Command.Send<SearchAction>) =>
+          Command.latest(
+            "search",
             Effect.gen(function* () {
               yield* Effect.sleep("250 millis");
               const api = yield* SearchApi;
               const results = yield* api.search(query);
 
-              yield* send(SearchAction.ResultsLoaded({ results }));
+              return SearchAction.ResultsLoaded({ results });
             }),
           ),
         ],
@@ -117,7 +117,7 @@ export type DetailAction = Data.TaggedEnum<{ Started: {}; Tick: {} }>;
 export const DetailAction = Data.taggedEnum<DetailAction>();
 
 export const Detail = Feature.make<DetailState, DetailAction>()({
-  initial: () => ({ note: notes[0], seconds: 0, running: false }),
+  initial: (note: Note) => ({ note, seconds: 0, running: false }),
   reduce: (state, action) =>
     DetailAction.$match(action, {
       Started: () => ({
@@ -148,6 +148,19 @@ export type AppAction = Data.TaggedEnum<{
 
 export const AppAction = Data.taggedEnum<AppAction>();
 
+export const searchChild = Feature.child<AppState, AppAction>()({
+  state: "search",
+  action: "Search",
+  feature: Search,
+});
+
+export const detailChild = Feature.optionalChild<AppState, AppAction>()({
+  state: "detail",
+  action: "Detail",
+  feature: Detail,
+  identity: (state) => state.note.id,
+});
+
 export const App = Feature.make<AppState, AppAction>()({
   initial: () => ({ search: Search.initial(), detail: Option.none() }),
   reduce: (state, action) =>
@@ -155,20 +168,8 @@ export const App = Feature.make<AppState, AppAction>()({
       Search: () => ({ state }),
       Detail: () => ({ state }),
       Opened: ({ note }) => ({
-        state: { ...state, detail: Option.some({ note, seconds: 0, running: false }) },
+        state: { ...state, detail: Option.some(Detail.initial(note)) },
       }),
       Closed: () => ({ state: { ...state, detail: Option.none() } }),
     }),
-}).pipe(
-  Feature.child({
-    state: Optic.id<AppState>().key("search"),
-    action: Feature.tag<AppAction>()("Search"),
-    feature: Search,
-  }),
-  Feature.optionalChild({
-    state: Optic.id<AppState>().key("detail"),
-    action: Feature.tag<AppAction>()("Detail"),
-    feature: Detail,
-    identity: (state) => state.note.id,
-  }),
-);
+}).pipe(searchChild, detailChild);

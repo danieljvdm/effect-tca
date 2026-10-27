@@ -11,4 +11,7 @@ vp run --filter tca-collection-example start
 ```
 
 `Collection.ts` defines the reusable feature. `main.ts` runs it in a scoped store
-and prints the two snapshots. Scope exit releases the remaining ticker.
+and uses `Store.scope(store, counters.at(id))` to send each child its own actions.
+It prints two snapshots and shows that the old left handle rejects dispatch after
+recreation. Scope the parent again to obtain a new handle. Scope exit releases
+the remaining ticker.

@@ -25,6 +25,8 @@ const program = Effect.gen(function* () {
 
 Namespace exports are also available as direct imports such as
 `@yielded/tca/Feature`. Effect Atom bindings live in `@yielded/tca/atom`.
+Reuse child descriptors with `Store.scope` or `FeatureAtom.scope` to give each
+component only its own state and actions.
 
 Commands never write state directly. Stores serialize actions and run commands
 after committing state. Disposing the store scope ends its commands and
