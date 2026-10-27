@@ -1,5 +1,5 @@
 {
-  "$schema": "./node_modules/@effect/tsgo/schema.json",
+  "$schema": "./node_modules/tsrs/schemas/tsconfig.schema.json",
   "compilerOptions": {
     "target": "es2023",
     "lib": ["ES2023"],
