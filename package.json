@@ -23,8 +23,6 @@
     "@types/node": "catalog:",
     "@yielded/effect-tsrs": "catalog:",
     "effect": "catalog:",
-    "oxfmt": "0.75.0",
-    "oxlint": "1.90.0",
     "tsrs": "catalog:",
     "typescript": "catalog:",
     "vite": "catalog:",
