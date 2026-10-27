@@ -23,7 +23,7 @@ import { StoreError } from "./StoreError.ts";
 export interface Store<S, A> {
   readonly get: Effect.Effect<S, StoreError>;
   readonly changes: Stream.Stream<S, StoreError>;
-  /** Completes after the transition commits and its commands are registered. */
+  /** Completes after the transition commits and its effects are registered. */
   readonly send: (action: A) => Effect.Effect<void, StoreError>;
   /** Completes on disposal; fails with the original runtime failure otherwise. */
   readonly closed: Effect.Effect<void, StoreError>;

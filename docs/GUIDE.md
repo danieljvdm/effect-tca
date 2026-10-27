@@ -20,7 +20,7 @@ const Timer = Feature.make({
   cases: {
     Start: (state) => ({
       state: { ...state, running: true },
-      commands: [
+      effects: [
         Stream.tick("1 second").pipe(
           Stream.drop(1),
           Stream.map(() => Action.cases.Tick.make({})),
@@ -30,7 +30,7 @@ const Timer = Feature.make({
     }),
     Stop: (state) => ({
       state: { ...state, running: false },
-      commands: [Command.cancel("timer")],
+      effects: [Command.cancel("timer")],
     }),
     Tick: (state) => ({ state: { ...state, seconds: state.seconds + 1 } }),
   },
@@ -42,13 +42,14 @@ Annotate the initializer's return type when empty collections, optional values,
 or literals need a wider state type. For plain TypeScript actions or a custom
 reducer, use `Feature.make<State, Action>()({ initial, reduce })` instead.
 
+Return work in the `effects` array using the `Command` builders.
 `Command.run` starts independent work. `Command.latest` replaces work with the
 same key in that feature instance. For one response, pass an Effect returning
 an action; for multiple emissions, pass a Stream. Each emission waits for its
 state transition to commit. The timer drops `Stream.tick`'s immediate first
 emission to wait a full second. A callback receiving `send` is also available
 for custom workflows. Hot event sources still need bounded buffering.
-Use ordinary Effect services inside commands, including `Service.use`, and
+Use ordinary Effect services inside effects, including `Service.use`, and
 provide their Layers when creating a store. Convert expected failures into
 application actions with `Effect.match` or the Stream error operators.
 
@@ -76,8 +77,8 @@ uses this for its detail feature.
 
 Store snapshots are immutable. `changes` starts with the current state and
 publishes new snapshots, coalescing updates for slow observers. `send` completes
-after the transition commits and its commands are registered. It does not wait
-for the timer to finish. Unexpected reducer or command failures close the store;
+after the transition commits and its effects are registered. It does not wait
+for the timer to finish. Unexpected reducer or effect failures close the store;
 observe `closed` when hosting a store outside its normal UI lifetime.
 
 ## Composing children
@@ -194,7 +195,7 @@ const scenario = TestStore.scenario(Timer, { assertEquals: assert.deepStrictEqua
 
 Each callback returns the complete expected next state. Omitting it asserts no
 state change. Receive pending effect actions before sending more user actions.
-`scenario` checks for pending emissions and unfinished commands after a successful
+`scenario` checks for pending emissions and unfinished effects after a successful
 body, then disposes its scope. Cancel long-lived work explicitly first. For manual
 scope ownership, use `TestStore.make` and call `finish` before disposal. Receive
 timeouts use the current Effect clock, so with TestClock you must advance time and

@@ -18,7 +18,7 @@ import { StoreError } from "./StoreError.ts";
  */
 export interface Transition<S, A, R = never> {
   readonly state: S;
-  readonly commands?: ReadonlyArray<Command.Command<A, R>>;
+  readonly effects?: ReadonlyArray<Command.Command<A, R>>;
 }
 
 /**
@@ -58,7 +58,7 @@ type Cases<S, C extends Record<string, Schema.Constraint>> = {
   ) => Transition<NoInfer<S>, C[keyof C]["Type"], unknown>;
 };
 
-type Requirements<T> = T extends { readonly commands?: ReadonlyArray<infer C> }
+type Requirements<T> = T extends { readonly effects?: ReadonlyArray<infer C> }
   ? C extends Command.Run<infer _A, infer R>
     ? R
     : never
@@ -243,7 +243,7 @@ const register = <S, A, R, I>(self: Definition<S, A, R, I>, key: string): Readon
 };
 
 /**
- * Runs the child before the parent and lifts its commands into the parent lifetime.
+ * Runs the child before the parent and lifts its effects into the parent lifetime.
  * Reuse the descriptor with Store.scope or FeatureAtom.scope. The two-call form
  * accepts checked state property and action tag names. Duplicate route keys throw
  * StoreError during composition.
@@ -289,11 +289,9 @@ export function child<S, A, CS, CA, CR>(
 
         return {
           state: parent.state,
-          commands: [
-            ...(result.commands ?? []).map((command) =>
-              rebase(command, [action.key], action.embed),
-            ),
-            ...(parent.commands ?? []),
+          effects: [
+            ...(result.effects ?? []).map((command) => rebase(command, [action.key], action.embed)),
+            ...(parent.effects ?? []),
           ],
         };
       },
@@ -387,11 +385,11 @@ export function optionalChild<S, A, CS, CA, CR>(
 
         return {
           state: parent.state,
-          commands: [
-            ...(result.commands ?? []).map((command) =>
+          effects: [
+            ...(result.effects ?? []).map((command) =>
               rebase(command, path(childState.value), action.embed),
             ),
-            ...(parent.commands ?? []),
+            ...(parent.effects ?? []),
           ],
         };
       },
@@ -493,11 +491,11 @@ export function forEach<S, A, CS, CA, CR>(
 
         return {
           state: parent.state,
-          commands: [
-            ...(result.commands ?? []).map((command) =>
+          effects: [
+            ...(result.effects ?? []).map((command) =>
               rebase(command, [action.key, id], (child) => action.embed({ id, action: child })),
             ),
-            ...(parent.commands ?? []),
+            ...(parent.effects ?? []),
           ],
         };
       },

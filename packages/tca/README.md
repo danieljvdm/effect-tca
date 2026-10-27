@@ -1,6 +1,6 @@
 # @yielded/tca
 
-Immutable feature reducers, scoped Effect commands, typed child composition,
+Immutable feature reducers, scoped effects, typed child composition,
 and a TestStore for complete action and state assertions.
 
 ```sh
@@ -28,8 +28,8 @@ Namespace exports are also available as direct imports such as
 Reuse child descriptors with `Store.scope` or `FeatureAtom.scope` to give each
 component only its own state and actions.
 
-Commands never write state directly. Stores serialize actions and run commands
-after committing state. Disposing the store scope ends its commands and
+Effects never write state directly. Stores serialize actions and run effects
+after committing state. Disposing the store scope ends its effects and
 subscriptions. Stores do not provide persistence or distributed delivery.
 
 See the [guide](https://github.com/yielded-dev/tca/blob/main/docs/GUIDE.md)

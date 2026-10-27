@@ -1,20 +1,21 @@
 # Public API contracts
 
-`@yielded/tca` provides synchronous feature reducers, commands, scoped stores,
+`@yielded/tca` provides synchronous feature reducers, scoped effects and stores,
 and a TestStore. `@yielded/tca/atom` adapts the same store to Effect Atom.
 Applications own state and action types, service implementations, and views.
 `Feature.make` also accepts an action `Schema.TaggedUnion`, an initializer, and
 an exhaustive `cases` map. It infers action payloads, state, initializer input,
-and the combined command requirements. The schema remains available as
+and the combined effect requirements. The schema remains available as
 `feature.actions`. State annotations widen empty collections and optional values.
 The existing typed reducer constructor remains available; declaring an action
 schema does not add validation to ordinary store dispatch.
 Feature initializers may require input. Store creation then requires that input
 or an explicit initial state; child composition never calls the initializer.
 
-A reducer returns the next immutable state and optional commands. Commands run
-after the state commits and send actions through the same serialized store.
-Expected errors become application actions; unexpected command or reducer
+A reducer returns the next immutable `state` and an optional `effects` array of
+`Command` descriptions. Effects run after the state commits and send actions
+through the same serialized store.
+Expected errors become application actions; unexpected effect or reducer
 failures close the store and remain observable through `closed` and `send`.
 
 `Feature.child`, `optionalChild`, and `forEach` return reusable descriptors and
@@ -46,8 +47,8 @@ also fences already queued
 actions. Each execution has its own Effect scope. Dependencies are captured when
 the store is created. The caller's scope owns the store and its finalizers.
 
-`send` completes after its action commits and its commands are registered. It
-does not wait for those commands to finish. Action queues apply backpressure;
+`send` completes after its action commits and its effects are registered. It
+does not wait for those effects to finish. Action queues apply backpressure;
 snapshot subscriptions retain the latest state and may coalesce intermediate
 states. Reducers must not mutate earlier states or perform external work.
 `Store.bindActions(store, actions)` derives payload-taking senders from an action
@@ -58,7 +59,7 @@ lifetime checks still apply. Binding and constructing the Effect do no work.
 TestStore uses the same runtime but holds effect emissions until `receive`.
 The caller supplies the test runner's deep equality assertion. Each send and
 receive checks the complete expected state. `finish` checks for unreceived
-actions and running commands before disposal. `TestStore.scenario` owns disposal
+actions and running effects before disposal. `TestStore.scenario` owns disposal
 and calls `finish` after a successful body; body failures remain unchanged.
 Time remains under the caller's Effect TestClock. TestStore is a product API,
 not a dependency on a test runner.
