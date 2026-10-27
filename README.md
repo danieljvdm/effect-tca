@@ -9,24 +9,20 @@ draft, then return an effect. Async work sends actions back through the reducer.
 bun add effect-tca effect
 ```
 
-Search GitHub repositories as you type. Each new query cancels the previous
-search, waits for a pause in typing, and retries transient API failures.
+Search repositories as you type. Each new query replaces the previous search.
+Assume `./api` exports a `Repository` schema and a `SearchApi` service whose
+read-only `search(query)` effect handles HTTP, decoding, and interruption.
+Its errors expose `retryable` to distinguish transient failures.
 
 ```ts
 import { Feature } from "effect-tca";
 import * as Effect from "effect/Effect";
-import * as HttpClient from "effect/http/HttpClient";
-import * as HttpClientResponse from "effect/http/HttpClientResponse";
 import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
 
-const Repositories = Schema.Array(
-  Schema.Struct({
-    id: Schema.Finite,
-    full_name: Schema.String,
-    html_url: Schema.String,
-  }),
-);
+import { Repository, SearchApi } from "./api";
+
+const Repositories = Schema.Array(Repository);
 
 const Search = Feature.make({
   actions: Schema.TaggedUnion({
@@ -51,39 +47,27 @@ const Search = Feature.make({
       state.loading = term.length > 0;
 
       // After committing state, cancel the previous QueryChanged scope
-      // (its delay, fetch, and retries) and create a new one.
+      // (its delay, request, and retries) and create a new one.
       return effect.replace(function* (send) {
         // Clearing the input cancels old work without making another request.
         if (term === "") return;
 
-        // Debounce: newer input cancels this wait and starts a fresh 300 ms.
-        yield* Effect.sleep("300 millis");
-
-        const client = (yield* HttpClient.HttpClient).pipe(
-          HttpClient.filterStatusOk,
-          // Retry this idempotent GET at most twice, with jittered backoff.
-          HttpClient.retryTransient({
-            schedule: Schedule.exponential("200 millis").pipe(Schedule.jittered),
+        const api = yield* SearchApi;
+        yield* api.search(term).pipe(
+          // Retry transient failures up to twice using a native Effect schedule.
+          Effect.retry({
+            schedule: Schedule.exponential("200 millis"),
             times: 2,
+            while: (error) => error.retryable,
+          }),
+          // Debounce: replacing this scope cancels the wait and any running work.
+          Effect.delay("300 millis"),
+          // Async work sends actions; only the reducer edits state.
+          Effect.matchEffect({
+            onSuccess: (results) => send.ResultsLoaded({ results }),
+            onFailure: () => send.SearchFailed(),
           }),
         );
-
-        yield* client
-          .get("https://api.github.com/search/repositories", {
-            urlParams: { q: term, per_page: 5 },
-          })
-          .pipe(
-            // GitHub does not allow tracing headers on browser requests.
-            Effect.provideService(HttpClient.TracerPropagationEnabled, false),
-            Effect.flatMap(
-              HttpClientResponse.schemaBodyJson(Schema.Struct({ items: Repositories })),
-            ),
-            // Async work sends actions; only the reducer edits state.
-            Effect.matchEffect({
-              onSuccess: ({ items }) => send.ResultsLoaded({ results: items }),
-              onFailure: () => send.SearchFailed(),
-            }),
-          );
       });
     },
     ResultsLoaded: (state, { results }, effect) => {
@@ -102,7 +86,7 @@ const Search = Feature.make({
 
 `effect.replace` uses the current action tag as its key, local to this feature
 instance. A replaced search cannot send stale results into the new one.
-`Effect.sleep` supplies the debounce window; `Schedule` controls retries. Both
+`Effect.delay` supplies the debounce window; `Schedule` controls retries. Both
 share the search's scope, and interruption does not send `SearchFailed`.
 
 For React, add `@effect/atom-react`, `react`, and `react-dom` with `bun add`.
@@ -111,13 +95,11 @@ Create the binding once, outside render:
 ```tsx
 import { RegistryProvider, useAtomSet, useAtomSuspense } from "@effect/atom-react";
 import { FeatureAtom } from "effect-tca/atom";
-import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import * as Atom from "effect/reactivity/Atom";
 import { Suspense, useState } from "react";
 
 const search = FeatureAtom.bind(Search, {
-  // Supplies the HTTP service; scoped interruption aborts its fetch requests.
-  runtime: Atom.runtime(FetchHttpClient.layer),
+  runtime: Atom.runtime(SearchApi.layer),
 });
 
 function RepositorySearch() {
