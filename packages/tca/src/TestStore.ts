@@ -19,7 +19,7 @@ import { StoreError } from "./StoreError.ts";
  * @since 0.1.0-beta.0
  */
 export interface TestStore<S, A> {
-  readonly get: Effect.Effect<S>;
+  readonly get: Effect.Effect<S, StoreError>;
   readonly send: (action: A, update?: (previous: S) => S) => Effect.Effect<void, StoreError>;
   readonly receive: (action: A, update?: (previous: S) => S) => Effect.Effect<void, StoreError>;
   readonly finish: Effect.Effect<void, StoreError>;
@@ -32,10 +32,10 @@ export interface TestStore<S, A> {
  * @category models
  * @since 0.1.0-beta.0
  */
-export interface Options<S> extends Store.Options<S> {
+export type Options<S, I = void> = Store.Options<S, I> & {
   readonly assertEquals: (actual: unknown, expected: unknown) => void;
   readonly timeout?: Duration.Input;
-}
+};
 
 /**
  * Runs a feature with held effect emissions and exhaustive snapshot assertions.
@@ -43,9 +43,9 @@ export interface Options<S> extends Store.Options<S> {
  * @category constructors
  * @since 0.1.0-beta.0
  */
-export const make = Effect.fnUntraced(function* <S, A, R>(
-  feature: Feature.Definition<S, A, R>,
-  options: Options<S>,
+export const make = Effect.fnUntraced(function* <S, A, R, I>(
+  feature: Feature.Definition<S, A, R, I>,
+  options: Options<S, I>,
 ): Effect.fn.Return<TestStore<S, A>, StoreError, R | Scope.Scope> {
   const runtime = yield* makeRuntime(feature, options, true);
 
@@ -117,3 +117,35 @@ export const make = Effect.fnUntraced(function* <S, A, R>(
     }),
   };
 });
+
+/**
+ * Runs a scoped scenario and checks for pending actions and commands when it succeeds.
+ * Returns the scenario's result. On failure, preserves its error without running finish.
+ * Disposal always closes the store; clock advancement remains the caller's responsibility.
+ * @category constructors
+ * @since 0.1.0-beta.0
+ */
+export const scenario: <S, A, R, I, B, E, R2>(
+  feature: Feature.Definition<S, A, R, I>,
+  options: Options<S, I>,
+  run: (store: TestStore<S, A>) => Effect.Effect<B, E, R2>,
+) => Effect.Effect<B, StoreError | E, Exclude<R | R2, Scope.Scope>> = Effect.fnUntraced(function* <
+  S,
+  A,
+  R,
+  I,
+  B,
+  E,
+  R2,
+>(
+  feature: Feature.Definition<S, A, R, I>,
+  options: Options<S, I>,
+  run: (store: TestStore<S, A>) => Effect.Effect<B, E, R2>,
+) {
+  const store = yield* make(feature, options);
+  const result = yield* run(store);
+
+  yield* store.finish;
+
+  return result;
+}, Effect.scoped);

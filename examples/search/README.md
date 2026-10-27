@@ -15,8 +15,11 @@ it with Close or Escape, then reopen it: the timer starts fresh.
 `Search.ts` owns the application features and an in-memory SearchApi service.
 Search waits for a debounce interval and then a simulated API delay. A newer
 query invalidates the previous command. `App` embeds Search and an optional
-Detail feature; removing Detail cancels its timer automatically.
+Detail feature, initialized with the selected note. Removing Detail cancels its
+timer automatically.
 
-`App.tsx` creates one Atom runtime and one stable binding. Components render
-state and send actions; the text input keeps its immediate editing draft local.
-The RegistryProvider in `main.tsx` owns the store lifetime.
+`App.tsx` creates one Atom runtime and scopes its binding with the same child
+descriptors used by `App`. Search and detail components receive only their own
+state and actions. Each presented detail gets a new binding; a dismissed detail's
+dispatcher cannot target its replacement. The text input keeps its immediate
+editing draft local. The RegistryProvider in `main.tsx` owns the store lifetime.

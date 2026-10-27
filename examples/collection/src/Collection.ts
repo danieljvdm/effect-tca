@@ -1,7 +1,6 @@
 import { Command, Feature } from "@yielded/tca";
 import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
-import * as Optic from "effect/Optic";
 
 export type TickerAction = Data.TaggedEnum<{ Start: {}; Tick: {} }>;
 export const TickerAction = Data.taggedEnum<TickerAction>();
@@ -36,6 +35,12 @@ export type Action = Data.TaggedEnum<{
 
 export const Action = Data.taggedEnum<Action>();
 
+export const counters = Feature.forEach<State, Action>()({
+  state: "counters",
+  action: "Counter",
+  feature: Ticker,
+});
+
 export const Collection = Feature.make<State, Action>()({
   initial: () => ({
     counters: new Map([
@@ -61,10 +66,4 @@ export const Collection = Feature.make<State, Action>()({
         return { state: { counters } };
       },
     }),
-}).pipe(
-  Feature.forEach({
-    state: Optic.id<State>().key("counters"),
-    action: Feature.tag<Action>()("Counter"),
-    feature: Ticker,
-  }),
-);
+}).pipe(counters);

@@ -4,9 +4,22 @@ import * as Option from "effect/Option";
 import * as Atom from "effect/reactivity/Atom";
 import { useEffect, useRef, useState } from "react";
 
-import { App, AppAction, DetailAction, SearchAction, SearchApi } from "./Search.ts";
+import {
+  App,
+  AppAction,
+  DetailAction,
+  detailChild,
+  type DetailState,
+  type Note,
+  SearchAction,
+  SearchApi,
+  searchChild,
+  type SearchState,
+} from "./Search.ts";
 
 const binding = FeatureAtom.bind(App, { runtime: Atom.runtime(SearchApi.layer) });
+const search = FeatureAtom.scope(binding, searchChild);
+const details = FeatureAtom.scope(binding, detailChild);
 
 function SearchInput({
   initialQuery,
@@ -33,12 +46,101 @@ function SearchInput({
   );
 }
 
+function SearchNotes({
+  feature,
+  onOpen,
+}: {
+  readonly feature: FeatureAtom.Binding<SearchState, SearchAction>;
+  readonly onOpen: (note: Note) => void;
+}) {
+  const result = useAtomValue(feature.state);
+  const send = useAtomSet(feature.send);
+
+  if (result._tag !== "Success") return <section aria-label="Search notes" aria-busy="true" />;
+
+  const state = result.value;
+
+  return (
+    <section aria-label="Search notes">
+      <label className="search">
+        <span aria-hidden="true">⌕</span>
+        <SearchInput
+          initialQuery={state.query}
+          onQueryChange={(query) => send(SearchAction.QueryChanged({ query }))}
+        />
+      </label>
+      <div className="results-meta" aria-live="polite">
+        <span>
+          {state.loading
+            ? "Looking through your notes…"
+            : `${state.results.length} notes to explore`}
+        </span>
+        <span>YOUR NOTEBOOK</span>
+      </div>
+      <div className="notes" aria-busy={state.loading}>
+        {state.results.map((note, index) => (
+          <button className="note" key={note.id} onClick={() => onOpen(note)}>
+            <div className="note-top">
+              <span className="category">{note.category}</span>
+              <span className="number">{String(index + 1).padStart(2, "0")}</span>
+            </div>
+            <h2>{note.title}</h2>
+            <p>{note.body}</p>
+            <span className="read">
+              Read note <span aria-hidden="true">↗</span>
+            </span>
+          </button>
+        ))}
+        {!state.loading && state.results.length === 0 && (
+          <p className="empty">No notes found. Try “travel”, “work”, or “everyday”.</p>
+        )}
+      </div>
+    </section>
+  );
+}
+
+function NoteDetail({
+  feature,
+  onClose,
+}: {
+  readonly feature: FeatureAtom.Binding<DetailState, DetailAction>;
+  readonly onClose: () => void;
+}) {
+  const result = useAtomValue(feature.state);
+  const send = useAtomSet(feature.send);
+
+  if (result._tag !== "Success") return null;
+
+  const detail = result.value;
+
+  return (
+    <article>
+      <div className="note-top">
+        <span className="category">{detail.note.category}</span>
+        <button className="close" aria-label="Close note" onClick={onClose}>
+          ×
+        </button>
+      </div>
+      <h2 id="note-title">{detail.note.title}</h2>
+      <p>{detail.note.body}</p>
+      <div className="timer">
+        <span>Reading time: {detail.seconds}s</span>
+        <button disabled={detail.running} onClick={() => send(DetailAction.Started())}>
+          {detail.running ? "Timer running" : "Start reading timer"}
+        </button>
+      </div>
+    </article>
+  );
+}
+
 export function Fieldnotes() {
   const result = useAtomValue(binding.state);
+  const detailResult = useAtomValue(details);
   const send = useAtomSet(binding.send);
   const dialog = useRef<HTMLDialogElement>(null);
-  const state = result._tag === "Success" ? result.value : undefined;
-  const detail = state === undefined ? undefined : Option.getOrUndefined(state.detail);
+
+  const detail =
+    detailResult._tag === "Success" ? Option.getOrUndefined(detailResult.value) : undefined;
 
   const isOpen = detail !== undefined;
 
@@ -54,7 +156,7 @@ export function Fieldnotes() {
         <p>Please reload to start a fresh session.</p>
       </main>
     );
-  if (state === undefined)
+  if (result._tag !== "Success")
     return (
       <main aria-busy="true">
         <p>Opening your notebook…</p>
@@ -78,47 +180,7 @@ export function Fieldnotes() {
         </h1>
         <p>Notes from work, the everyday, and the long way home.</p>
       </section>
-      <section aria-label="Search notes">
-        <label className="search">
-          <span aria-hidden="true">⌕</span>
-          <SearchInput
-            initialQuery={state.search.query}
-            onQueryChange={(query) =>
-              send(
-                AppAction.Search({
-                  action: SearchAction.QueryChanged({ query }),
-                }),
-              )
-            }
-          />
-        </label>
-        <div className="results-meta" aria-live="polite">
-          <span>
-            {state.search.loading
-              ? "Looking through your notes…"
-              : `${state.search.results.length} notes to explore`}
-          </span>
-          <span>YOUR NOTEBOOK</span>
-        </div>
-        <div className="notes" aria-busy={state.search.loading}>
-          {state.search.results.map((note, index) => (
-            <button className="note" key={note.id} onClick={() => send(AppAction.Opened({ note }))}>
-              <div className="note-top">
-                <span className="category">{note.category}</span>
-                <span className="number">{String(index + 1).padStart(2, "0")}</span>
-              </div>
-              <h2>{note.title}</h2>
-              <p>{note.body}</p>
-              <span className="read">
-                Read note <span aria-hidden="true">↗</span>
-              </span>
-            </button>
-          ))}
-          {!state.search.loading && state.search.results.length === 0 && (
-            <p className="empty">No notes found. Try “travel”, “work”, or “everyday”.</p>
-          )}
-        </div>
-      </section>
+      <SearchNotes feature={search} onOpen={(note) => send(AppAction.Opened({ note }))} />
       <footer>
         <span>A notebook, not a feed.</span>
         <a href="https://github.com/yielded-dev/tca">An Effect TCA example ↗</a>
@@ -135,29 +197,7 @@ export function Fieldnotes() {
         }}
       >
         {detail !== undefined && (
-          <article>
-            <div className="note-top">
-              <span className="category">{detail.note.category}</span>
-              <button
-                className="close"
-                aria-label="Close note"
-                onClick={() => send(AppAction.Closed())}
-              >
-                ×
-              </button>
-            </div>
-            <h2 id="note-title">{detail.note.title}</h2>
-            <p>{detail.note.body}</p>
-            <div className="timer">
-              <span>Reading time: {detail.seconds}s</span>
-              <button
-                disabled={detail.running}
-                onClick={() => send(AppAction.Detail({ action: DetailAction.Started() }))}
-              >
-                {detail.running ? "Timer running" : "Start reading timer"}
-              </button>
-            </div>
-          </article>
+          <NoteDetail feature={detail} onClose={() => send(AppAction.Closed())} />
         )}
       </dialog>
     </main>

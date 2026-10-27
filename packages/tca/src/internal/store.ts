@@ -6,6 +6,7 @@ import type * as Fiber from "effect/Fiber";
 import * as Option from "effect/Option";
 import * as PubSub from "effect/PubSub";
 import * as Queue from "effect/Queue";
+import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 
@@ -17,7 +18,16 @@ import { StoreError } from "../StoreError.ts";
 interface Owner {
   readonly executions: Set<Execution>;
   readonly keys: Map<Command.Key, Execution>;
+  closed?: Deferred.Deferred<void>;
 }
+
+interface Origin {
+  readonly owner: Owner;
+  readonly path: string;
+}
+
+/** @internal */
+export const ScopeTypeId: unique symbol = Symbol.for("@yielded/tca/Store/scope");
 
 interface Execution {
   valid: boolean;
@@ -27,6 +37,7 @@ interface Execution {
 export interface Message<A> {
   readonly action: A;
   readonly execution?: Execution;
+  readonly origin?: Origin;
   readonly receipt: Deferred.Deferred<void, StoreError>;
 }
 
@@ -41,6 +52,7 @@ export interface Runtime<S, A> {
 
 const disposed = () => StoreError.make({ reason: "Closed", message: "The store is closed" });
 const valid = <A>(message: Message<A>) => message.execution?.valid ?? true;
+const isStoreError = Schema.is(StoreError);
 
 // Invalidating is synchronous with the turn. Waiting for interruption here would
 // deadlock a command that is currently waiting for its own action's receipt.
@@ -49,9 +61,9 @@ const invalidate = (execution: Execution): void => {
   execution.fiber?.interruptUnsafe();
 };
 
-export const makeRuntime = Effect.fnUntraced(function* <S, A, R>(
-  feature: Feature.Definition<S, A, R>,
-  options: Store.Options<S> = {},
+export const makeRuntime = Effect.fnUntraced(function* <S, A, R, I>(
+  feature: Feature.Definition<S, A, R, I>,
+  options: { readonly capacity?: number; readonly initialState?: S; readonly input?: I } = {},
   testing = false,
 ): Effect.fn.Return<Runtime<S, A>, StoreError, R | Scope.Scope> {
   const capacity = options.capacity ?? 256;
@@ -64,7 +76,9 @@ export const makeRuntime = Effect.fnUntraced(function* <S, A, R>(
   }
 
   let state = yield* Effect.try({
-    try: () => (options.initialState === undefined ? feature.initial() : options.initialState),
+    // Public constructors require input or initialState when the initializer needs it.
+    try: () =>
+      "initialState" in options ? (options.initialState as S) : feature.initial(options.input as I),
     catch: (cause) =>
       StoreError.make({ reason: "Reducer", message: "Feature initialization failed", cause }),
   });
@@ -109,6 +123,7 @@ export const makeRuntime = Effect.fnUntraced(function* <S, A, R>(
     for (const [path, owner] of owners) {
       if (paths.has(path)) continue;
       for (const execution of owner.executions) invalidate(execution);
+      if (owner.closed !== undefined) Deferred.doneUnsafe(owner.closed, Effect.void);
       owners.delete(path);
     }
     for (const path of paths) {
@@ -138,13 +153,19 @@ export const makeRuntime = Effect.fnUntraced(function* <S, A, R>(
           ),
     );
 
-  const send = Effect.fnUntraced(function* (action: A, execution?: Execution) {
+  const live = (origin: Origin): boolean => owners.get(origin.path) === origin.owner;
+
+  const missing = () =>
+    StoreError.make({ reason: "MissingChild", message: "The scoped child is no longer present" });
+
+  const send = Effect.fnUntraced(function* (action: A, execution?: Execution, origin?: Origin) {
     if (execution !== undefined && !execution.valid) return;
+    if (origin !== undefined && !live(origin)) return yield* missing();
 
     const receipt = yield* Deferred.make<void, StoreError>();
 
     yield* submit(
-      { action, execution, receipt },
+      { action, execution, origin, receipt },
       execution !== undefined && testing ? emissions : inbox,
     );
   });
@@ -205,6 +226,11 @@ export const makeRuntime = Effect.fnUntraced(function* <S, A, R>(
     }
     if (stopped) {
       yield* Deferred.fail(message.receipt, failure ?? disposed());
+
+      return;
+    }
+    if (message.origin !== undefined && !live(message.origin)) {
+      yield* Deferred.fail(message.receipt, missing());
 
       return;
     }
@@ -272,12 +298,115 @@ export const makeRuntime = Effect.fnUntraced(function* <S, A, R>(
     }),
   );
 
+  const makeView = <VS, VA>(
+    select: (state: S) => Option.Option<VS>,
+    embed: (action: VA) => A,
+    path: ReadonlyArray<string>,
+    origin?: Origin,
+  ): Store.Store<VS, VA> => {
+    const cache = new WeakMap<object, { readonly owner: Owner; readonly view: object }>();
+
+    const viewClosed =
+      origin === undefined
+        ? Deferred.await(closed)
+        : Effect.raceFirst(
+            Deferred.await(closed),
+            Deferred.await((origin.owner.closed ??= Deferred.makeUnsafe<void>())),
+          );
+
+    const read = (): VS => {
+      if (stopped) throw failure ?? disposed();
+      if (origin !== undefined && !live(origin)) throw missing();
+      const selected = select(state);
+
+      if (Option.isNone(selected)) throw missing();
+
+      return selected.value;
+    };
+
+    const scopeChild = <CS, CA>(focus: Feature.Focus<VS, VA, CS, CA>) =>
+      Effect.try({
+        try: (): Option.Option<Store.Store<CS, CA>> => {
+          const parent = read();
+          const tail = focus.path(parent);
+
+          if (Option.isNone(tail) || Option.isNone(focus.select(parent))) return Option.none();
+          const childPath = [...path, ...tail.value];
+          const key = JSON.stringify(childPath);
+          const owner = owners.get(key);
+
+          if (owner === undefined)
+            throw StoreError.make({
+              reason: "MissingChild",
+              message: "The child descriptor is not mounted in this feature",
+            });
+          const cachedView = cache.get(focus);
+
+          if (cachedView?.owner === owner) {
+            // A descriptor fixes CS/CA; this cache only erases those parameters for storage.
+            return Option.some(cachedView.view as Store.Store<CS, CA>);
+          }
+
+          const child = makeView(
+            (snapshot) => Option.flatMap(select(snapshot), focus.select),
+            (action: CA) => embed(focus.embed(action)),
+            childPath,
+            { owner, path: key },
+          );
+
+          cache.set(focus, { owner, view: child });
+
+          return Option.some(child);
+        },
+        catch: (cause) =>
+          isStoreError(cause)
+            ? cause
+            : StoreError.make({ reason: "MissingChild", message: "Unable to select child", cause }),
+      });
+
+    return {
+      get: Effect.try({
+        try: read,
+        catch: (cause) =>
+          isStoreError(cause)
+            ? cause
+            : StoreError.make({ reason: "MissingChild", message: "Unable to read child", cause }),
+      }),
+      changes: Stream.fromPubSub(snapshots).pipe(
+        Stream.interruptWhen(viewClosed),
+        Stream.filter(() => origin === undefined || live(origin)),
+        Stream.map(select),
+        Stream.filter(Option.isSome),
+        Stream.map((selected) => selected.value),
+      ),
+      send: (action) =>
+        Effect.flatMap(
+          Effect.try({
+            try: () => embed(action),
+            catch: (cause) =>
+              StoreError.make({
+                reason: "MissingChild",
+                message: "Unable to route child action",
+                cause,
+              }),
+          }),
+          (action) => send(action, undefined, origin),
+        ),
+      closed: viewClosed,
+      [ScopeTypeId]: scopeChild,
+    };
+  };
+
   return {
     store: {
+      ...makeView(
+        (snapshot) => Option.some(snapshot),
+        (action: A) => action,
+        [],
+      ),
       get: Effect.sync(() => state),
       changes: Stream.fromPubSub(snapshots).pipe(Stream.interruptWhen(Deferred.await(closed))),
       send: (action) => send(action),
-      closed: Deferred.await(closed),
     },
     peek,
     take,
@@ -287,9 +416,9 @@ export const makeRuntime = Effect.fnUntraced(function* <S, A, R>(
   };
 });
 
-export const makeStore = Effect.fnUntraced(function* <S, A, R>(
-  feature: Feature.Definition<S, A, R>,
-  options?: Store.Options<S>,
+export const makeStore = Effect.fnUntraced(function* <S, A, R, I>(
+  feature: Feature.Definition<S, A, R, I>,
+  options?: { readonly capacity?: number; readonly initialState?: S; readonly input?: I },
 ) {
   const runtime = yield* makeRuntime(feature, options);
 
