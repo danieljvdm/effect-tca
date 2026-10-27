@@ -9,47 +9,101 @@ draft, then return an effect. Async work sends actions back through the reducer.
 bun add effect-tca effect
 ```
 
-This focus timer starts once, even if `Started` arrives repeatedly. Pausing stops
-the ticking; starting again resumes from the same elapsed time.
+Search GitHub repositories as you type. Each new query cancels the previous
+search, waits for a pause in typing, and retries transient API failures.
 
 ```ts
 import { Feature } from "effect-tca";
 import * as Effect from "effect/Effect";
+import * as HttpClient from "effect/http/HttpClient";
+import * as HttpClientResponse from "effect/http/HttpClientResponse";
+import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
 
-const Focus = Feature.make({
-  actions: Schema.TaggedUnion({ Started: {}, Paused: {}, Tick: {} }),
-  initial: () => ({ seconds: 0, running: false }),
-  reduce: {
-    Started: (state, _action, effect) => {
-      if (state.running) return effect.none;
-      state.running = true;
+const Repositories = Schema.Array(
+  Schema.Struct({
+    id: Schema.Finite,
+    full_name: Schema.String,
+    html_url: Schema.String,
+  }),
+);
 
+const Search = Feature.make({
+  actions: Schema.TaggedUnion({
+    QueryChanged: { query: Schema.String },
+    ResultsLoaded: { results: Repositories },
+    SearchFailed: {},
+  }),
+  initial: () => ({
+    query: "",
+    results: Repositories.make([]),
+    loading: false,
+    error: "",
+  }),
+  reduce: {
+    QueryChanged: (state, { query }, effect) => {
+      const term = query.trim();
+      // Repeated queries leave the current search alone.
+      if (term === state.query) return effect.none;
+      state.query = term;
+      state.results = [];
+      state.error = "";
+      state.loading = term.length > 0;
+
+      // After committing state, cancel the previous QueryChanged scope
+      // (its delay, fetch, and retries) and create a new one.
       return effect.replace(function* (send) {
-        while (true) {
-          yield* Effect.sleep("1 second");
-          yield* send.Tick();
-        }
+        // Clearing the input cancels old work without making another request.
+        if (term === "") return;
+
+        // Debounce: newer input cancels this wait and starts a fresh 300 ms.
+        yield* Effect.sleep("300 millis");
+
+        const client = (yield* HttpClient.HttpClient).pipe(
+          HttpClient.filterStatusOk,
+          // Retry this idempotent GET at most twice, with jittered backoff.
+          HttpClient.retryTransient({
+            schedule: Schedule.exponential("200 millis").pipe(Schedule.jittered),
+            times: 2,
+          }),
+        );
+
+        yield* client
+          .get("https://api.github.com/search/repositories", {
+            urlParams: { q: term, per_page: 5 },
+          })
+          .pipe(
+            // GitHub does not allow tracing headers on browser requests.
+            Effect.provideService(HttpClient.TracerPropagationEnabled, false),
+            Effect.flatMap(
+              HttpClientResponse.schemaBodyJson(Schema.Struct({ items: Repositories })),
+            ),
+            // Async work sends actions; only the reducer edits state.
+            Effect.matchEffect({
+              onSuccess: ({ items }) => send.ResultsLoaded({ results: items }),
+              onFailure: () => send.SearchFailed(),
+            }),
+          );
       });
     },
-    Paused: (state, _action, effect) => {
-      state.running = false;
-
-      return effect.cancel("Started");
+    ResultsLoaded: (state, { results }, effect) => {
+      state.results = [...results];
+      state.loading = false;
+      return effect.none;
     },
-    Tick: (state, _action, effect) => {
-      state.seconds += 1;
-
+    SearchFailed: (state, _action, effect) => {
+      state.loading = false;
+      state.error = "Search failed. Try a different query.";
       return effect.none;
     },
   },
 });
 ```
 
-Starting is idempotent because the reducer commits `running = true` before the
-effect starts. Further `Started` actions return `effect.none`. `effect.replace`
-owns the timer under the `Started` action, so `Paused` can cancel it by name.
-Only `Tick` edits the elapsed time; the async loop never holds a state draft.
+`effect.replace` uses the current action tag as its key, local to this feature
+instance. A replaced search cannot send stale results into the new one.
+`Effect.sleep` supplies the debounce window; `Schedule` controls retries. Both
+share the search's scope, and interruption does not send `SearchFailed`.
 
 For React, add `@effect/atom-react`, `react`, and `react-dom` with `bun add`.
 Create the binding once, outside render:
@@ -57,31 +111,49 @@ Create the binding once, outside render:
 ```tsx
 import { RegistryProvider, useAtomSet, useAtomSuspense } from "@effect/atom-react";
 import { FeatureAtom } from "effect-tca/atom";
-import * as Layer from "effect/Layer";
+import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import * as Atom from "effect/reactivity/Atom";
-import { Suspense } from "react";
+import { Suspense, useState } from "react";
 
-const timer = FeatureAtom.bind(Focus, {
-  runtime: Atom.runtime(Layer.empty),
+const search = FeatureAtom.bind(Search, {
+  // Supplies the HTTP service; scoped interruption aborts its fetch requests.
+  runtime: Atom.runtime(FetchHttpClient.layer),
 });
 
-function FocusTimer() {
-  const result = useAtomSuspense(timer.state, { includeFailure: true });
-  const send = useAtomSet(timer.send);
+function RepositorySearch() {
+  const result = useAtomSuspense(search.state, { includeFailure: true });
+  const send = useAtomSet(search.send);
+  // Keep typing immediate while actions flow through the store asynchronously.
+  const [input, setInput] = useState("");
 
   if (result._tag === "Failure") {
-    return <p role="alert">The timer stopped unexpectedly.</p>;
+    return <p role="alert">The search stopped unexpectedly.</p>;
   }
 
-  const { seconds, running } = result.value;
+  const state = result.value;
 
   return (
     <section>
-      <h1>Time to focus</h1>
-      <output>{seconds}s focused</output>
-      <button onClick={() => send({ _tag: running ? "Paused" : "Started" })}>
-        {running ? "Pause" : "Start focusing"}
-      </button>
+      <h1>Find a repository</h1>
+      <input
+        aria-label="Search GitHub repositories"
+        placeholder="effect-tca"
+        value={input}
+        onChange={(event) => {
+          const query = event.currentTarget.value;
+          setInput(query);
+          send({ _tag: "QueryChanged", query });
+        }}
+      />
+      {state.loading && <p role="status">Searching…</p>}
+      {state.error && <p role="alert">{state.error}</p>}
+      <ul>
+        {state.results.map((repo) => (
+          <li key={repo.id}>
+            <a href={repo.html_url}>{repo.full_name}</a>
+          </li>
+        ))}
+      </ul>
     </section>
   );
 }
@@ -89,18 +161,17 @@ function FocusTimer() {
 export function App() {
   return (
     <RegistryProvider>
-      <Suspense fallback={<p>Opening timer…</p>}>
-        <FocusTimer />
+      <Suspense fallback={<p>Opening search…</p>}>
+        <RepositorySearch />
       </Suspense>
     </RegistryProvider>
   );
 }
 ```
 
-The Atom binding gives each registry its own store. React reads state and sends
-actions; releasing the last consumer disposes the store and cancels the timer.
-The same lifetime rules apply to composed child features: removing a child ends
-its work, and its queued actions cannot update a replacement.
+The Atom binding gives each registry its own store. Releasing the last consumer
+disposes the store and cancels its work. Removing a composed child feature does
+the same for that child, without affecting other instances.
 
 The [guide](docs/GUIDE.md) covers composition, scoped stores, and TestStore.
 The [search example](examples/search/README.md) shows a complete React app with
