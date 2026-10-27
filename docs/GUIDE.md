@@ -1,55 +1,72 @@
 # Building a feature
 
-Define immutable state and actions, then return the next state from a synchronous
-reducer. A feature definition can create many independent stores. Each store's
+Define action cases and return the next immutable state from synchronous
+handlers. A feature definition can create many independent stores. Each store's
 scope owns its work and subscriptions.
 
 ```ts
 import { Command, Feature, Store } from "@yielded/tca";
-import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
+import * as Schema from "effect/Schema";
+import * as Stream from "effect/Stream";
 
 type State = { readonly seconds: number; readonly running: boolean };
-type Action = Data.TaggedEnum<{ Start: {}; Stop: {}; Tick: {} }>;
-const Action = Data.taggedEnum<Action>();
+const Action = Schema.TaggedUnion({ Start: {}, Stop: {}, Tick: {} });
+type Action = typeof Action.Type;
 
-const Timer = Feature.make<State, Action>()({
-  initial: () => ({ seconds: 0, running: false }),
-  reduce: (state, action) =>
-    Action.$match(action, {
-      Start: () => ({
-        state: { ...state, running: true },
-        commands: [
-          Command.latest("timer", (send: Command.Send<Action>) =>
-            Effect.forever(Effect.sleep("1 second").pipe(Effect.andThen(send(Action.Tick())))),
-          ),
-        ],
-      }),
-      Stop: () => ({
-        state: { ...state, running: false },
-        commands: [Command.cancel("timer")],
-      }),
-      Tick: () => ({ state: { ...state, seconds: state.seconds + 1 } }),
+const Timer = Feature.make({
+  actions: Action,
+  initial: (): State => ({ seconds: 0, running: false }),
+  cases: {
+    Start: (state) => ({
+      state: { ...state, running: true },
+      commands: [
+        Stream.tick("1 second").pipe(
+          Stream.drop(1),
+          Stream.map(() => Action.cases.Tick.make({})),
+          Command.latest("timer"),
+        ),
+      ],
     }),
+    Stop: (state) => ({
+      state: { ...state, running: false },
+      commands: [Command.cancel("timer")],
+    }),
+    Tick: (state) => ({ state: { ...state, seconds: state.seconds + 1 } }),
+  },
 });
 ```
 
+The action schema supplies payload types and requires a handler for every case.
+Annotate the initializer's return type when empty collections, optional values,
+or literals need a wider state type. For plain TypeScript actions or a custom
+reducer, use `Feature.make<State, Action>()({ initial, reduce })` instead.
+
 `Command.run` starts independent work. `Command.latest` replaces work with the
 same key in that feature instance. For one response, pass an Effect returning
-an action; the command sends its result automatically. For multiple emissions,
-use the callback form above and yield `send` to wait for each state transition.
-Use ordinary Effect services inside commands and provide their Layers when
-creating a store. Convert expected service failures into application actions.
+an action; for multiple emissions, pass a Stream. Each emission waits for its
+state transition to commit. The timer drops `Stream.tick`'s immediate first
+emission to wait a full second. A callback receiving `send` is also available
+for custom workflows. Hot event sources still need bounded buffering.
+Use ordinary Effect services inside commands, including `Service.use`, and
+provide their Layers when creating a store. Convert expected failures into
+application actions with `Effect.match` or the Stream error operators.
 
 ```ts
 const program = Effect.gen(function* () {
   const store = yield* Store.make(Timer);
-  yield* store.send(Action.Start());
+  const actions = Store.bindActions(store, Action);
+  yield* actions.Start();
   yield* Effect.sleep("2 seconds");
-  yield* store.send(Action.Stop());
+  yield* actions.Stop();
   return yield* store.get;
 }).pipe(Effect.scoped);
 ```
+
+Bound senders accept each case's constructor payload and validate it when their
+Effect runs. Invalid payloads fail with a `SchemaIssue.Issue` without dispatching.
+You can also send an action directly with `store.send`; ordinary dispatch does
+not validate schemas. Both forms retain the store's lifetime checks.
 
 An initializer can require data, such as `initial: (note: Note) => ...`.
 Create that store with `{ input: note }`, or supply `{ initialState }` directly.
@@ -68,11 +85,15 @@ observe `closed` when hosting a store outside its normal UI lifetime.
 Declare a child once, then reuse it for reducer composition and store scoping:
 
 ```ts
+import * as Data from "effect/Data";
+import * as Optic from "effect/Optic";
+
 type ParentState = { readonly timer: State };
 type ParentAction = Data.TaggedEnum<{ Timer: { readonly action: Action } }>;
+const timerState = Optic.id<ParentState>().key("timer");
 
 const timerChild = Feature.child<ParentState, ParentAction>()({
-  state: "timer",
+  state: timerState,
   action: "Timer",
   feature: Timer,
 });
@@ -88,6 +109,11 @@ back through the same route. Tagged action names accept cases with exactly
 `_tag` and `action`. For nested state or other action shapes, pass an Effect optic
 and a `Feature.Route` with `key`, `extract`, and `embed`. Route keys must be unique
 within a parent.
+
+Use a property name such as `state: "timer"` for a direct child. Optics also
+compose through deeper state. Inside a reducer,
+`timerState.key("seconds").modify((n) => n + 1)(state)` returns a new parent
+state without nested spreads; earlier snapshots remain unchanged.
 
 `yield* Store.scope(parentStore, timerChild)` returns a store exposing only the
 timer's state and actions. It shares the parent's runtime and dependencies.
@@ -121,12 +147,14 @@ const app = FeatureAtom.bind(Parent, {
 const timer = FeatureAtom.scope(app, timerChild);
 ```
 
-Inside a RegistryProvider, `useAtomValue(timer.state)` returns an AsyncResult and
-`useAtomSet(timer.send)` returns a dispatcher. Handle Initial, Success, and
-Failure in the view. The binding creates one store per registry. Releasing its
+Inside a RegistryProvider, `useAtomSuspense(timer.state).value` reads state under
+React Suspense and an error boundary; `useAtomSet(timer.send)` returns a dispatcher.
+For explicit loading and failure UI, use `useAtomValue` and handle its AsyncResult.
+The binding creates one store per registry. Releasing its
 last subscriber and action mount disposes that store; keep a subscription at
 the desired application lifetime. Scoped bindings use the same parent store and
-dispatch child actions directly. `Atom.mapResult` can select smaller state slices.
+dispatch child actions directly. Select a smaller state slice with
+`timer.state.pipe(Atom.mapResult((state) => state.seconds))`.
 Dispatch is asynchronous; keep controlled text-input drafts local so typing is
 reflected immediately, and send their values as feature actions.
 
@@ -135,6 +163,11 @@ atom containing an AsyncResult of `Option<Binding>`. Render the present binding;
 each new child lifetime gets a new binding, and old dispatchers cannot send into it.
 Keep dynamic bindings within their originating registry; passing one through a
 different RegistryProvider fails with `MissingChild`.
+
+For keyed children, cache the presence atom with
+`Atom.family((id: string) => FeatureAtom.scope(app, children.at(id)))`.
+Reuse that family outside render so repeated IDs select the same atom while
+new child lifetimes still produce fresh bindings.
 
 The [search application](../examples/search/README.md) shows the complete setup.
 
@@ -151,10 +184,10 @@ import * as TestClock from "effect/testing/TestClock";
 
 const scenario = TestStore.scenario(Timer, { assertEquals: assert.deepStrictEqual }, (store) =>
   Effect.gen(function* () {
-    yield* store.send(Action.Start(), (state) => ({ ...state, running: true }));
+    yield* store.send(Action.cases.Start.make({}), (state) => ({ ...state, running: true }));
     yield* TestClock.adjust("1 second");
-    yield* store.receive(Action.Tick(), (state) => ({ ...state, seconds: 1 }));
-    yield* store.send(Action.Stop(), (state) => ({ ...state, running: false }));
+    yield* store.receive(Action.cases.Tick.make({}), (state) => ({ ...state, seconds: 1 }));
+    yield* store.send(Action.cases.Stop.make({}), (state) => ({ ...state, running: false }));
   }),
 ).pipe(Effect.provide(TestClock.layer()));
 ```

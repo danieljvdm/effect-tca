@@ -10,15 +10,20 @@ The same child descriptors scope stores and Atom bindings for reusable views.
 ```ts
 import { Feature, Store } from "@yielded/tca";
 import * as Effect from "effect/Effect";
+import * as Schema from "effect/Schema";
 
-const Counter = Feature.make<{ readonly count: number }, "increment">()({
+const Counter = Feature.make({
+  actions: Schema.TaggedUnion({ Incremented: {} }),
   initial: () => ({ count: 0 }),
-  reduce: (state) => ({ state: { count: state.count + 1 } }),
+  cases: {
+    Incremented: (state) => ({ state: { count: state.count + 1 } }),
+  },
 });
 
 const program = Effect.gen(function* () {
   const store = yield* Store.make(Counter);
-  yield* store.send("increment");
+  const actions = Store.bindActions(store, Counter.actions);
+  yield* actions.Incremented();
   return yield* store.get;
 }).pipe(Effect.scoped);
 ```

@@ -1,16 +1,19 @@
 import { Command, Feature } from "@yielded/tca";
 import * as Context from "effect/Context";
-import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Schema from "effect/Schema";
+import * as Stream from "effect/Stream";
 
-export interface Note {
-  readonly id: string;
-  readonly title: string;
-  readonly category: string;
-  readonly body: string;
-}
+export const Note = Schema.Struct({
+  id: Schema.String,
+  title: Schema.String,
+  category: Schema.String,
+  body: Schema.String,
+});
+
+export type Note = typeof Note.Type;
 
 export const notes: readonly [Note, ...Note[]] = [
   {
@@ -77,34 +80,29 @@ export interface SearchState {
   readonly results: ReadonlyArray<Note>;
 }
 
-export type SearchAction = Data.TaggedEnum<{
-  QueryChanged: { readonly query: string };
-  ResultsLoaded: { readonly results: ReadonlyArray<Note> };
-}>;
+export const SearchAction = Schema.TaggedUnion({
+  QueryChanged: { query: Schema.String },
+  ResultsLoaded: { results: Schema.Array(Note) },
+});
 
-export const SearchAction = Data.taggedEnum<SearchAction>();
+export type SearchAction = typeof SearchAction.Type;
 
-export const Search = Feature.make<SearchState, SearchAction>()({
-  initial: () => ({ query: "", loading: false, results: notes }),
-  reduce: (state, action) =>
-    SearchAction.$match(action, {
-      QueryChanged: ({ query }) => ({
-        state: { ...state, query, loading: true },
-        commands: [
-          Command.latest(
-            "search",
-            Effect.gen(function* () {
-              yield* Effect.sleep("250 millis");
-              const api = yield* SearchApi;
-              const results = yield* api.search(query);
-
-              return SearchAction.ResultsLoaded({ results });
-            }),
-          ),
-        ],
-      }),
-      ResultsLoaded: ({ results }) => ({ state: { ...state, results, loading: false } }),
+export const Search = Feature.make({
+  actions: SearchAction,
+  initial: (): SearchState => ({ query: "", loading: false, results: notes }),
+  cases: {
+    QueryChanged: (state, { query }) => ({
+      state: { ...state, query, loading: true },
+      commands: [
+        SearchApi.use((api) => api.search(query)).pipe(
+          Effect.delay("250 millis"),
+          Effect.map((results) => SearchAction.cases.ResultsLoaded.make({ results })),
+          Command.latest("search"),
+        ),
+      ],
     }),
+    ResultsLoaded: (state, { results }) => ({ state: { ...state, results, loading: false } }),
+  },
 });
 
 export interface DetailState {
@@ -113,25 +111,26 @@ export interface DetailState {
   readonly running: boolean;
 }
 
-export type DetailAction = Data.TaggedEnum<{ Started: {}; Tick: {} }>;
-export const DetailAction = Data.taggedEnum<DetailAction>();
+export const DetailAction = Schema.TaggedUnion({ Started: {}, Tick: {} });
 
-export const Detail = Feature.make<DetailState, DetailAction>()({
-  initial: (note: Note) => ({ note, seconds: 0, running: false }),
-  reduce: (state, action) =>
-    DetailAction.$match(action, {
-      Started: () => ({
-        state: { ...state, running: true },
-        commands: [
-          Command.latest("timer", (send: Command.Send<DetailAction>) =>
-            Effect.forever(
-              Effect.sleep("1 second").pipe(Effect.andThen(send(DetailAction.Tick()))),
-            ),
-          ),
-        ],
-      }),
-      Tick: () => ({ state: { ...state, seconds: state.seconds + 1 } }),
+export type DetailAction = typeof DetailAction.Type;
+
+export const Detail = Feature.make({
+  actions: DetailAction,
+  initial: (note: Note): DetailState => ({ note, seconds: 0, running: false }),
+  cases: {
+    Started: (state) => ({
+      state: { ...state, running: true },
+      commands: [
+        Stream.tick("1 second").pipe(
+          Stream.drop(1),
+          Stream.map(() => DetailAction.cases.Tick.make({})),
+          Command.latest("timer"),
+        ),
+      ],
     }),
+    Tick: (state) => ({ state: { ...state, seconds: state.seconds + 1 } }),
+  },
 });
 
 export interface AppState {
@@ -139,14 +138,14 @@ export interface AppState {
   readonly detail: Option.Option<DetailState>;
 }
 
-export type AppAction = Data.TaggedEnum<{
-  Search: { readonly action: SearchAction };
-  Detail: { readonly action: DetailAction };
-  Opened: { readonly note: Note };
-  Closed: {};
-}>;
+export const AppAction = Schema.TaggedUnion({
+  Search: { action: SearchAction },
+  Detail: { action: DetailAction },
+  Opened: { note: Note },
+  Closed: {},
+});
 
-export const AppAction = Data.taggedEnum<AppAction>();
+export type AppAction = typeof AppAction.Type;
 
 export const searchChild = Feature.child<AppState, AppAction>()({
   state: "search",
@@ -161,15 +160,15 @@ export const detailChild = Feature.optionalChild<AppState, AppAction>()({
   identity: (state) => state.note.id,
 });
 
-export const App = Feature.make<AppState, AppAction>()({
-  initial: () => ({ search: Search.initial(), detail: Option.none() }),
-  reduce: (state, action) =>
-    AppAction.$match(action, {
-      Search: () => ({ state }),
-      Detail: () => ({ state }),
-      Opened: ({ note }) => ({
-        state: { ...state, detail: Option.some(Detail.initial(note)) },
-      }),
-      Closed: () => ({ state: { ...state, detail: Option.none() } }),
+export const App = Feature.make({
+  actions: AppAction,
+  initial: (): AppState => ({ search: Search.initial(), detail: Option.none() }),
+  cases: {
+    Search: (state) => ({ state }),
+    Detail: (state) => ({ state }),
+    Opened: (state, { note }) => ({
+      state: { ...state, detail: Option.some(Detail.initial(note)) },
     }),
+    Closed: (state) => ({ state: { ...state, detail: Option.none() } }),
+  },
 }).pipe(searchChild, detailChild);

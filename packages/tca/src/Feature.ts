@@ -4,10 +4,11 @@
  */
 import type * as Optic from "effect/Optic";
 import * as Option from "effect/Option";
-import { type Pipeable, pipeArguments } from "effect/Pipeable";
+import type { Pipeable } from "effect/Pipeable";
+import type * as Schema from "effect/Schema";
 
 import * as Command from "./Command.ts";
-import { actionRoute, stateLens } from "./internal/feature.ts";
+import { actionRoute, makeDefinition, stateLens } from "./internal/feature.ts";
 import { StoreError } from "./StoreError.ts";
 
 /**
@@ -36,8 +37,38 @@ export interface Definition<S, A, R = never, I = void> extends Pipeable {
 }
 
 /**
- * Defines synchronous state transitions. The second call infers command requirements
- * and initializer input. Annotate an initializer parameter when state needs caller input.
+ * A feature whose action schema remains available for constructors and bound senders.
+ * Declaring a schema does not validate ordinary store dispatches.
+ * @category models
+ * @since 0.1.0-beta.0
+ */
+export interface SchemaDefinition<
+  S,
+  C extends Record<string, Schema.Constraint>,
+  R = never,
+  I = void,
+> extends Definition<S, C[keyof C]["Type"], R, I> {
+  readonly actions: Schema.TaggedUnion<C>;
+}
+
+type Cases<S, C extends Record<string, Schema.Constraint>> = {
+  readonly [K in keyof C]: (
+    state: NoInfer<S>,
+    action: C[K]["Type"],
+  ) => Transition<NoInfer<S>, C[keyof C]["Type"], unknown>;
+};
+
+type Requirements<T> = T extends { readonly commands?: ReadonlyArray<infer C> }
+  ? C extends Command.Run<infer _A, infer R>
+    ? R
+    : never
+  : never;
+
+/**
+ * Defines synchronous state transitions. The typed two-call form accepts a reducer.
+ * The schema form infers actions and requires one handler per action tag. Annotate
+ * the initializer's return type to widen empty collections or optional state, and
+ * its parameter when state needs caller input. Both forms infer command requirements.
  * @example
  * ```ts
  * const Counter = Feature.make<{ readonly count: number }, "increment">()({
@@ -48,19 +79,39 @@ export interface Definition<S, A, R = never, I = void> extends Pipeable {
  * @category constructors
  * @since 0.1.0-beta.0
  */
-export const make =
-  <S, A>() =>
-  <R = never, I = void>(spec: {
-    readonly initial: (input: I) => S;
-    readonly reduce: (state: S, action: A) => Transition<S, A, R>;
-  }): Definition<S, A, R, I> => ({
-    ...spec,
-    lifetimes: () => [[]],
-    routes: [],
-    pipe() {
-      return pipeArguments(this, arguments);
-    },
-  });
+export function make<S, A>(): <R = never, I = void>(spec: {
+  readonly initial: (input: I) => S;
+  readonly reduce: (state: S, action: A) => Transition<S, A, R>;
+}) => Definition<S, A, R, I>;
+
+export function make<
+  C extends Record<string, Schema.Constraint>,
+  S,
+  P extends Cases<S, C>,
+  I = void,
+>(spec: {
+  readonly actions: Schema.TaggedUnion<C>;
+  readonly initial: (input: I) => S;
+  readonly cases: P & { readonly [K in Exclude<keyof P, keyof C>]: never };
+}): SchemaDefinition<S, C, Requirements<ReturnType<P[keyof P]>>, I>;
+
+export function make<S, A, R, I>(spec?: {
+  readonly actions: unknown;
+  readonly initial: (input: I) => S;
+  readonly cases: Readonly<Record<string, (state: S, action: A) => Transition<S, A, R>>>;
+}): unknown {
+  if (spec === undefined) return makeDefinition;
+
+  return {
+    ...makeDefinition({
+      initial: spec.initial,
+      reduce: (state: S, action: A) =>
+        // The public schema overload requires the handler for every action tag.
+        spec.cases[(action as { readonly _tag: string })._tag](state, action),
+    }),
+    actions: spec.actions,
+  };
+}
 
 /**
  * An action route and its stable, parent-local lifetime namespace.
@@ -134,9 +185,8 @@ export interface Focus<
  * @category models
  * @since 0.1.0-beta.0
  */
-export interface ChildDescriptor<S, A, CS, CA, CR> extends Focus<S, A, CS, CA, "Child"> {
-  <R, I>(self: Definition<S, A, R, I>): Definition<S, A, R | CR, I>;
-}
+export interface ChildDescriptor<S, A, CS, CA, CR>
+  extends Focus<S, A, CS, CA, "Child">, Composition<S, A, CR> {}
 
 /**
  * Reusable optional-child composition and store focus. Its identity policy is
@@ -144,15 +194,8 @@ export interface ChildDescriptor<S, A, CS, CA, CR> extends Focus<S, A, CS, CA, "
  * @category models
  * @since 0.1.0-beta.0
  */
-export interface OptionalChildDescriptor<S, A, CS, CA, CR> extends Focus<
-  S,
-  A,
-  CS,
-  CA,
-  "OptionalChild"
-> {
-  <R, I>(self: Definition<S, A, R, I>): Definition<S, A, R | CR, I>;
-}
+export interface OptionalChildDescriptor<S, A, CS, CA, CR>
+  extends Focus<S, A, CS, CA, "OptionalChild">, Composition<S, A, CR> {}
 
 /**
  * Reusable collection composition. `at(id)` focuses one optional keyed child;
@@ -160,10 +203,15 @@ export interface OptionalChildDescriptor<S, A, CS, CA, CR> extends Focus<
  * @category models
  * @since 0.1.0-beta.0
  */
-export interface ForEachDescriptor<S, A, CS, CA, CR> {
+export interface ForEachDescriptor<S, A, CS, CA, CR> extends Composition<S, A, CR> {
   readonly _tag: "ForEach";
   readonly at: (id: string) => Focus<S, A, CS, CA, "OptionalChild">;
-  <R, I>(self: Definition<S, A, R, I>): Definition<S, A, R | CR, I>;
+}
+
+interface Composition<S, A, CR> {
+  <R, I, Metadata extends object>(
+    self: Definition<S, A, R, I> & Metadata,
+  ): Definition<S, A, R | CR, I> & Pick<Metadata, Extract<keyof Metadata, "actions">>;
 }
 
 /**
@@ -222,7 +270,9 @@ export function child<S, A, CS, CA, CR>(
   const action = actionRoute(options.action);
 
   return Object.assign(
-    <R, I>(self: Definition<S, A, R, I>): Definition<S, A, R | CR, I> => ({
+    <R, I, Metadata extends object>(
+      self: Definition<S, A, R, I> & Metadata,
+    ): Definition<S, A, R | CR, I> & Metadata => ({
       ...self,
       routes: register(self, action.key),
       lifetimes: (current) => [
@@ -302,7 +352,9 @@ export function optionalChild<S, A, CS, CA, CR>(
   const path = (current: CS) => [action.key, options.identity?.(current) ?? "present"];
 
   return Object.assign(
-    <R, I>(self: Definition<S, A, R, I>): Definition<S, A, R | CR, I> => ({
+    <R, I, Metadata extends object>(
+      self: Definition<S, A, R, I> & Metadata,
+    ): Definition<S, A, R | CR, I> & Metadata => ({
       ...self,
       routes: register(self, action.key),
       lifetimes: (current) => {
@@ -406,7 +458,9 @@ export function forEach<S, A, CS, CA, CR>(
   const action = actionRoute(options.action);
 
   return Object.assign(
-    <R, I>(self: Definition<S, A, R, I>): Definition<S, A, R | CR, I> => ({
+    <R, I, Metadata extends object>(
+      self: Definition<S, A, R, I> & Metadata,
+    ): Definition<S, A, R | CR, I> & Metadata => ({
       ...self,
       routes: register(self, action.key),
       lifetimes: (current) => [

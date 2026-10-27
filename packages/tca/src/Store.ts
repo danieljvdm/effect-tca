@@ -4,10 +4,13 @@
  */
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
+import type * as Schema from "effect/Schema";
+import type * as SchemaIssue from "effect/SchemaIssue";
 import type * as Scope from "effect/Scope";
 import type * as Stream from "effect/Stream";
 
 import type * as Feature from "./Feature.ts";
+import { bindActions as bindActionSenders } from "./internal/boundActions.ts";
 import { makeStore, ScopeTypeId } from "./internal/store.ts";
 import { StoreError } from "./StoreError.ts";
 
@@ -59,6 +62,34 @@ export const make: <S, A, R, I>(
     ? [options?: Options<NoInfer<S>, NoInfer<I>>]
     : [options: Options<NoInfer<S>, NoInfer<I>>]
 ) => Effect.Effect<Store<S, A>, StoreError, R | Scope.Scope> = makeStore;
+
+/**
+ * Named action senders. Payloads use each case's constructor input, including
+ * defaults, without its discriminator. Cases with no required payload fields
+ * can be called without an argument.
+ * @category models
+ * @since 0.1.0-beta.0
+ */
+export type BoundActions<Cases extends Record<string, Schema.Constraint>> = {
+  readonly [K in keyof Cases]: (
+    ...args: {} extends Omit<Cases[K]["~type.make.in"], "_tag">
+      ? [payload?: Omit<Cases[K]["~type.make.in"], "_tag">]
+      : [payload: Omit<Cases[K]["~type.make.in"], "_tag">]
+  ) => Effect.Effect<void, SchemaIssue.Issue | StoreError>;
+};
+
+/**
+ * Derives named senders from an action schema. Each returned Effect applies
+ * constructor defaults, validates the payload, and waits for the action to
+ * commit through this store. Schema failures do not dispatch. Binding or calling
+ * a sender does no work; scoped senders retain their original child lifetime.
+ * @category combinators
+ * @since 0.1.0-beta.0
+ */
+export const bindActions: <S, A, Cases extends Record<string, Schema.Schema<NoInfer<A>>>>(
+  store: Store<S, A>,
+  actions: Schema.TaggedUnion<Cases>,
+) => BoundActions<Cases> = bindActionSenders;
 
 /**
  * Focuses the existing runtime using a feature's child descriptor. Optional
